@@ -474,14 +474,32 @@ def _checkpoint_is_finite(loss_value, grad_norm_value, raw_delta_value) -> bool:
 
 
 def apply_update_agc(model, grad_norm, raw_delta=None):
+    # Dwell-aware speed control: allow search velocity, reward stability.
+    dwell_brake_thresh = 20.0
+    dwell_recover_thresh = 50.0
+    current_dwell = getattr(model, "ptr_mean_dwell", 0.0)
+    try:
+        current_dwell = float(current_dwell)
+    except Exception:
+        current_dwell = 0.0
+    if not math.isfinite(current_dwell):
+        current_dwell = 0.0
+
+    # Dynamic cap that can shrink/relax; persists on model.
+    base_cap = float(getattr(model, "agc_scale_max", AGC_SCALE_MAX))
+    cap = float(getattr(model, "agc_scale_cap", base_cap))
+    if not math.isfinite(cap) or cap <= 0:
+        cap = base_cap
+    cap = max(AGC_SCALE_MIN, min(base_cap, cap))
+
     scale = float(getattr(model, "update_scale", UPDATE_SCALE))
-    scale_max = float(getattr(model, "agc_scale_max", AGC_SCALE_MAX))
     if AGC_ENABLED and grad_norm is not None and math.isfinite(grad_norm):
         if grad_norm < AGC_GRAD_LOW:
             scale *= AGC_SCALE_UP
         elif grad_norm > AGC_GRAD_HIGH:
             scale *= AGC_SCALE_DOWN
-    scale = max(AGC_SCALE_MIN, min(scale_max, scale))
+    scale = max(AGC_SCALE_MIN, min(cap, scale))
+
     if SPEED_GOV_ENABLED and raw_delta is not None:
         try:
             raw_delta_value = float(raw_delta)
@@ -497,17 +515,35 @@ def apply_update_agc(model, grad_norm, raw_delta=None):
                 ema = float(ema)
                 limit = max(SPEED_GOV_L_MIN, min(SPEED_GOV_L_MAX, ema * SPEED_GOV_L_K))
                 if math.isfinite(limit) and limit > 0.0:
-                    t = min(ground_speed_raw / limit, 0.5)
-                    h = t * (1.0 - t)
-                    brake = 1.0 + SPEED_GOV_RHO * (h / 0.25)
-                    if brake > 0.0 and math.isfinite(brake):
-                        scale = scale / brake
-                        scale = max(AGC_SCALE_MIN, min(scale_max, scale))
+                    # Apply brake only when not in a high-dwell lock state.
+                    if current_dwell < dwell_brake_thresh:
+                        t = min(ground_speed_raw / limit, 0.5)
+                        h = t * (1.0 - t)
+                        brake = 1.0 + SPEED_GOV_RHO * (h / 0.25)
+                        if brake > 0.0 and math.isfinite(brake):
+                            cap = max(AGC_SCALE_MIN, min(base_cap, cap / brake))
+                            scale = max(AGC_SCALE_MIN, min(cap, scale / brake))
                 ground_speed = raw_delta_value * scale
                 ema = SPEED_GOV_L_EMA * ema + (1.0 - SPEED_GOV_L_EMA) * ground_speed
                 model.ground_speed_ema = ema
                 model.ground_speed_limit = limit
                 model.ground_speed = ground_speed
+
+    # Recovery reflex: if dwell is high, aggressively relax cap/scale upward.
+    if current_dwell >= dwell_recover_thresh:
+        if SPEED_GOV_RHO > 0:
+            cap = max(cap, min(base_cap, cap * (1.0 / SPEED_GOV_RHO)))
+            # Raise floor during lock so we can actually learn.
+            scale_floor = max(0.010, AGC_SCALE_MIN, cap * 0.2)
+            scale = max(scale_floor, scale)
+            scale = min(cap, scale * (1.0 / SPEED_GOV_RHO))
+        else:
+            scale = min(base_cap, scale)
+
+    # Persist dynamic cap and scale.
+    cap = max(AGC_SCALE_MIN, min(base_cap, cap))
+    scale = max(AGC_SCALE_MIN, min(cap, scale))
+    model.agc_scale_cap = cap
     model.update_scale = scale
 
 
@@ -2022,10 +2058,27 @@ def train_wallclock(model, loader, dataset_name, model_name, num_classes, wall_c
                 ground_speed_limit_text = (
                     f", g_L={float(ground_speed_limit):.3f}" if ground_speed_limit is not None else ""
                 )
+                ptr_stats = []
+                for label, val, fmt in [
+                    ("flip", getattr(model, "ptr_flip_rate", None), "{:.3f}"),
+                    ("dwell", getattr(model, "ptr_mean_dwell", None), "{:.2f}"),
+                    ("dwell_max", getattr(model, "ptr_max_dwell", None), "{:.0f}"),
+                    ("delta", getattr(model, "ptr_delta_abs_mean", None), "{:.4f}"),
+                    ("delta_raw", getattr(model, "ptr_delta_raw_mean", None), "{:.4f}"),
+                ]:
+                    if val is None:
+                        continue
+                    try:
+                        v = float(val)
+                    except Exception:
+                        continue
+                    if math.isfinite(v):
+                        ptr_stats.append(f"{label}={fmt.format(v)}")
+                ptr_text = f", ptr[{'; '.join(ptr_stats)}]" if ptr_stats else ""
                 log(
                     f"{dataset_name} | {model_name} | step {step:04d} | loss {loss.item():.4f} | "
                     f"t={elapsed:.1f}s | ctrl(inertia={model.ptr_inertia:.2f}, deadzone={model.ptr_deadzone:.2f}, walk={model.ptr_walk_prob:.2f}, cadence={model.ptr_update_every}, scale={getattr(model, 'update_scale', UPDATE_SCALE):.3f}"
-                    f"{raw_delta_text}{ground_speed_text}{ground_speed_ema_text}{ground_speed_limit_text})"
+                    f"{raw_delta_text}{ground_speed_text}{ground_speed_ema_text}{ground_speed_limit_text}{ptr_text})"
                     + xray_text
                     + (f" | panic={panic_status}" if panic_reflex is not None else "")
                 )

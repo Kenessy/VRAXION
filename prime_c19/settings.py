@@ -219,7 +219,8 @@ def load_settings() -> Settings:
     lr = _env_float("TP6_LR", 1e-3)
     wall_clock_seconds = _env_int("TP6_WALL", 15 * 60)
     max_steps = _env_int("TP6_MAX_STEPS", 0)
-    heartbeat_steps = _env_int("VAR_LOG_EVERY_N_STEPS", 10)
+    # Default to per-step heartbeat/logging; callers can raise via env if desired.
+    heartbeat_steps = _env_int("VAR_LOG_EVERY_N_STEPS", 1)
     heartbeat_secs = _env_float("VAR_LOG_EVERY_N_SECS", 0.0)
     live_trace_every = _env_int("VAR_LIVE_TRACE_EVERY_N_STEPS", heartbeat_steps)
     satiety_thresh = _env_float("TP6_SATIETY", 0.98)
