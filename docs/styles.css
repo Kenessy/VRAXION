@@ -290,7 +290,17 @@ body {
 .bottom-hud {
   border-bottom: none;
   border-top: 1px solid var(--dim);
-  justify-content: center;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.bottom-hud a#btn-repo {
+  color: var(--blue);
+  text-decoration: none;
+}
+
+.bottom-hud a#btn-repo:hover {
+  text-shadow: 0 0 8px rgba(0, 240, 255, 0.6);
 }
 
 .menu-grid {
