@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+.venv/
+.env
+
+# Data/artifacts (exclude large datasets, keep small hand_kv)
+data/
+!data/hand_kv*.jsonl
+logs/
+traces/
+summaries/
+TRASH/
+review_pack/
+review_pack.zip
+
+# Checkpoints / binaries
+checkpoint.pt
+*.pt
+*.pth
+*.ckpt
+
+# Misc local files
+audit_findings_temp.md
+1
+
+# OS
+.DS_Store
+Thumbs.db
+# Keep checkpoints, artifacts, logs, and transient outputs out of git
+checkpoint.pt
+artifacts/
+logs/
+*.log
+live_trace_*.json
+summary_*.json
