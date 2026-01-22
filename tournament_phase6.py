@@ -533,6 +533,9 @@ def apply_update_agc(model, grad_norm, raw_delta=None, step: int | None = None):
         }
         log(f"[debug_scale_step0] {dbg}")
 
+    # write back the updated scale so logging reflects the actual value
+    model.update_scale = scale
+
     # Use the strongest dwell signal we have for gating (captures brief locks).
     dwell_metric = max(current_dwell, max_dwell)
 
