@@ -185,6 +185,8 @@ DWELL_INERTIA_THRESH = float(os.environ.get("TP6_DWELL_INERTIA_THRESH", "50.0"))
 WALK_PULSE_ENABLED = bool(int(os.environ.get("TP6_WALK_PULSE", "0")))
 WALK_PULSE_EVERY = int(os.environ.get("TP6_WALK_PULSE_EVERY", "50"))
 WALK_PULSE_VALUE = float(os.environ.get("TP6_WALK_PULSE_VALUE", "0.5"))
+SHARD_ENABLED = bool(int(os.environ.get("TP6_SHARD_BATCH", "0")))
+SHARD_SIZE = int(os.environ.get("TP6_SHARD_SIZE", "19"))
 PTR_UPDATE_GOV_VEL_HIGH = getattr(CFG, "ptr_update_gov_vel_high", 0.5)
 LIVE_TRACE_PATH = CFG.live_trace_path
 RUN_MODE = CFG.run_mode
@@ -1992,7 +1994,16 @@ def train_wallclock(model, loader, dataset_name, model_name, num_classes, wall_c
                     outputs, move_pen, xray = model(inputs, return_xray=True)
                 else:
                     outputs, move_pen = model(inputs)
-                loss = criterion(outputs, targets) + LAMBDA_MOVE * move_pen
+                if SHARD_ENABLED and SHARD_SIZE > 0 and outputs.shape[0] > SHARD_SIZE:
+                    # Sub-culture partitioning: split batch into shards, mean losses.
+                    loss_parts = []
+                    for out_chunk, tgt_chunk in zip(
+                        torch.split(outputs, SHARD_SIZE, dim=0), torch.split(targets, SHARD_SIZE, dim=0)
+                    ):
+                        loss_parts.append(criterion(out_chunk, tgt_chunk))
+                    loss = torch.stack(loss_parts).mean() + LAMBDA_MOVE * move_pen
+                else:
+                    loss = criterion(outputs, targets) + LAMBDA_MOVE * move_pen
             scaler.scale(loss).backward()
             if USE_AMP and scaler.is_enabled():
                 scaler.unscale_(optimizer)
