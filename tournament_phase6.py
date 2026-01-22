@@ -199,6 +199,7 @@ SYNTH_MODE = CFG.synth_mode
 HAND_MIN = CFG.hand_min
 ASSOC_KEYS = CFG.assoc_keys
 ASSOC_PAIRS = CFG.assoc_pairs
+ASSOC_VAL_RANGE = getattr(CFG, "assoc_val_range", 256)
 SYNTH_META = {}
 # Evolution defaults (small to keep runs short/safe)
 EVO_POP = CFG.evo_pop
@@ -1469,6 +1470,94 @@ def get_seq_mnist_loader():
                     return x[item], y[item]
 
             ds = _Synth()
+
+            def collate(batch):
+                xs, ys = zip(*batch)
+                return torch.stack(xs, dim=0), torch.tensor(ys, dtype=torch.long)
+
+            loader = DataLoader(
+                ds,
+                batch_size=BATCH_SIZE,
+                shuffle=True,
+                num_workers=0,
+                pin_memory=False,
+                collate_fn=collate,
+            )
+            return loader, num_classes, collate
+        elif synth_mode == "assoc_byte":
+            seq_len = base_seq_len
+            pairs = max(1, int(ASSOC_PAIRS))
+            keys = max(2, int(ASSOC_KEYS))
+            val_range = max(2, int(ASSOC_VAL_RANGE))
+            min_len = pairs * 2 + 1
+            bump_attempts = 0
+            max_bumps = 5
+
+            def _build_assoc_byte(seq_len_local: int):
+                x_local = torch.zeros((n_samples, seq_len_local, 1), dtype=torch.float32)
+                y_local = torch.zeros((n_samples,), dtype=torch.long)
+                max_start_local = seq_len_local - 3  # reserve last token for query
+                for idx in range(n_samples):
+                    used = set()
+                    pair_specs = []
+                    starts = list(range(0, max_start_local + 1))
+                    random.shuffle(starts)
+                    for cand in starts:
+                        if cand in used or (cand + 1) in used:
+                            continue
+                        used.add(cand)
+                        used.add(cand + 1)
+                        key_id = random.randint(0, keys - 1)
+                        val = random.randint(0, val_range - 1)
+                        key_token = float(2 + key_id)
+                        val_token = -float(val + 1)  # keep value tokens distinct from keys/distractors
+                        x_local[idx, cand, 0] = key_token
+                        x_local[idx, cand + 1, 0] = val_token
+                        pair_specs.append((key_id, val, key_token))
+                        if len(pair_specs) >= pairs:
+                            break
+                    if len(pair_specs) < pairs:
+                        return None, None
+                    _, q_val, q_token = random.choice(pair_specs)
+                    x_local[idx, -1, 0] = q_token
+                    y_local[idx] = q_val
+                return x_local, y_local
+
+            if seq_len < min_len:
+                log(f"[synth] assoc_byte bump len from {seq_len} to {min_len} (min_len)")
+                seq_len = min_len
+
+            x = None
+            y = None
+            while bump_attempts <= max_bumps:
+                x, y = _build_assoc_byte(seq_len)
+                if x is not None:
+                    break
+                bump_attempts += 1
+                new_len = seq_len + max(2, pairs) * 2
+                log(f"[synth] assoc_byte bump len from {seq_len} to {new_len} (placement failed)")
+                seq_len = new_len
+
+            if x is None:
+                raise RuntimeError("assoc_byte: failed to place non-overlapping pairs after bumps")
+
+            SYNTH_META.update(
+                {"assoc_keys": keys, "assoc_pairs": pairs, "assoc_val_range": val_range, "synth_len": seq_len}
+            )
+            num_classes = val_range
+            log(
+                f"[synth] mode=assoc_byte rows={int(n_samples)} keys={keys} vals={val_range} "
+                f"pairs={pairs} len={seq_len}"
+            )
+
+            class _SynthByte(torch.utils.data.Dataset):
+                def __len__(self):
+                    return n_samples
+
+                def __getitem__(self, item):
+                    return x[item], y[item]
+
+            ds = _SynthByte()
 
             def collate(batch):
                 xs, ys = zip(*batch)

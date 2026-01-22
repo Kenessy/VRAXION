@@ -181,6 +181,7 @@ class Settings:
     hand_min: int
     assoc_keys: int
     assoc_pairs: int
+    assoc_val_range: int
 
     evo_pop: int
     evo_gens: int
@@ -373,6 +374,7 @@ def load_settings() -> Settings:
     hand_min = _env_int("TP6_HAND_MIN", 256)
     assoc_keys = _env_int("TP6_ASSOC_KEYS", 4)
     assoc_pairs = _env_int("TP6_ASSOC_PAIRS", 3)
+    assoc_val_range = _env_int("TP6_ASSOC_VAL_RANGE", 256)
 
     evo_pop = _env_int("TP6_EVO_POP", 6)
     evo_gens = _env_int("TP6_EVO_GENS", 3)
@@ -535,6 +537,7 @@ def load_settings() -> Settings:
         hand_min=hand_min,
         assoc_keys=assoc_keys,
         assoc_pairs=assoc_pairs,
+        assoc_val_range=assoc_val_range,
         evo_pop=evo_pop,
         evo_gens=evo_gens,
         evo_steps=evo_steps,
