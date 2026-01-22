@@ -64,11 +64,7 @@ layout: default
   }
 </style>
 
-<p align="center">
-  <img src="assets/banner-dark.svg" alt="PRIME C‑19 banner" width="100%">
-</p>
-
-# PRIME C‑19
+# VEXOR™
 **Phase‑Recurring Infinite Manifold Engine**  
 Pointer‑driven recurrent memory on a continuous circular manifold (ring buffer), focused on seam‑safe learning and stability on closed loops.
 
@@ -77,7 +73,7 @@ Pointer‑driven recurrent memory on a continuous circular manifold (ring buffer
 ---
 
 ## Founder note 👋
-Hi — I’m **Daniel Kenessy**. I’m **31** and based in **Slovakia**.  
+Hi — I’m **Daniel Kenessy**. I’m **31** and based in **Slovakia**. VEXOR™ is my working title for this line of research (mark filing intended; not yet registered).  
 I build experimental systems at the edges: ideas that look strange on paper until you can run them, graph them, and break them.
 
 I’ve always trusted two things: **intuition** and **mechanics**. PRIME C‑19 is me trying to turn that intuition into something you can inspect, reproduce, and improve — with the long‑term goal of making advanced AI **cheaper, more accessible, and more useful than “just a chatbot.”**
