@@ -529,12 +529,15 @@ def apply_update_agc(model, grad_norm, raw_delta=None):
                 model.ground_speed_limit = limit
                 model.ground_speed = ground_speed
 
-    # Recovery reflex: if dwell is high, aggressively relax cap/scale upward.
+    # Recovery reflex: if dwell is high, aggressively relax cap/scale upward and clear speed history.
     if current_dwell >= dwell_recover_thresh:
         if SPEED_GOV_RHO > 0:
-            cap = max(cap, min(base_cap, cap * (1.0 / SPEED_GOV_RHO)))
+            cap = base_cap  # hard reset to full cap when locked
+            model.ground_speed_ema = None  # clear ghost velocity
+            model.ground_speed_limit = None
+            model.ground_speed = None
             # Raise floor during lock so we can actually learn.
-            scale_floor = max(0.010, AGC_SCALE_MIN, cap * 0.2)
+            scale_floor = max(0.020, AGC_SCALE_MIN, cap * 0.4)
             scale = max(scale_floor, scale)
             scale = min(cap, scale * (1.0 / SPEED_GOV_RHO))
         else:
