@@ -54,6 +54,7 @@ LIVE_TRACE_EVERY = CFG.live_trace_every
 SATIETY_THRESH = CFG.satiety_thresh
 RING_LEN = CFG.ring_len
 SLOT_DIM = CFG.slot_dim
+EXPERT_HEADS = max(1, int(os.environ.get("TP6_EXPERT_HEADS", "1")))
 PTR_DTYPE = CFG.ptr_dtype
 PTR_PARAM_STRIDE = CFG.ptr_param_stride
 # Gaussian window + movement penalty controls
@@ -133,6 +134,12 @@ DEBUG_EVERY = int(os.environ.get("TP6_DEBUG_EVERY", "1"))
 PRECISION = CFG.precision
 DTYPE = CFG.dtype
 USE_AMP = CFG.use_amp
+DISABLE_SYNC = os.environ.get("TP6_DISABLE_SYNC", "0") == "1"
+# Auto-pick bf16 on supported CUDA devices when precision is not explicitly set.
+if os.environ.get("TP6_PRECISION") is None and DEVICE == "cuda" and torch.cuda.is_bf16_supported():
+    PRECISION = "bf16"
+    DTYPE = torch.bfloat16
+    USE_AMP = True
 torch.set_default_dtype(DTYPE)
 
 if hasattr(torch, "amp") and hasattr(torch.amp, "autocast"):
@@ -140,13 +147,15 @@ if hasattr(torch, "amp") and hasattr(torch.amp, "autocast"):
         return torch.amp.autocast(device_type="cuda", enabled=USE_AMP)
 
     def amp_grad_scaler():
-        return torch.amp.GradScaler("cuda", enabled=USE_AMP)
+        enabled = USE_AMP and DTYPE != torch.bfloat16
+        return torch.amp.GradScaler("cuda", enabled=enabled)
 else:
     def amp_autocast():
         return torch.cuda.amp.autocast(enabled=USE_AMP)
 
     def amp_grad_scaler():
-        return torch.cuda.amp.GradScaler(enabled=USE_AMP)
+        enabled = USE_AMP and DTYPE != torch.bfloat16
+        return torch.cuda.amp.GradScaler(enabled=enabled)
 MI_SHUFFLE = CFG.mi_shuffle
 STATE_LOOP_METRICS = CFG.state_loop_metrics
 STATE_LOOP_EVERY = CFG.state_loop_every
@@ -195,6 +204,7 @@ SHARD_ADAPT_EVERY = int(os.environ.get("TP6_SHARD_ADAPT_EVERY", "50"))
 SHARD_ADAPT_GRAD = float(os.environ.get("TP6_SHARD_ADAPT_GRAD", "10.0"))
 SHARD_ADAPT_DWELL = float(os.environ.get("TP6_SHARD_ADAPT_DWELL", "40.0"))
 SHARD_MIN_PER_SHARD = int(os.environ.get("TP6_SHARD_MIN_PER_SHARD", "1"))
+VASC_MIN_GROUP_RATIO = float(os.environ.get("TP6_VASC_MIN_GROUP_RATIO", "0.02"))
 TRACTION_ENABLED = bool(int(os.environ.get("TP6_TRACTION_LOG", "1")))
 PTR_UPDATE_GOV_VEL_HIGH = getattr(CFG, "ptr_update_gov_vel_high", 0.5)
 LIVE_TRACE_PATH = CFG.live_trace_path
@@ -303,7 +313,15 @@ def nan_guard(name: str, tensor: torch.Tensor, step: int) -> None:
         raise RuntimeError(f"NaN/Inf in {name} at step {step}")
 
 
-def apply_thermostat(model, flip_rate: float, ema: float | None):
+def apply_thermostat(
+    model,
+    flip_rate: float,
+    ema: float | None,
+    *,
+    focus: float | None = None,
+    tension: float | None = None,
+    raw_delta: float | None = None,
+):
     """Adaptive pointer control: reduce flapping without freezing forever."""
     if ema is None:
         ema = flip_rate
@@ -311,6 +329,30 @@ def apply_thermostat(model, flip_rate: float, ema: float | None):
         ema = THERMO_EMA * ema + (1.0 - THERMO_EMA) * flip_rate
     # Respect manual inertia override: do not mutate ptr_inertia/deadzone/walk.
     if os.environ.get("TP6_PTR_INERTIA_OVERRIDE") is not None:
+        return ema
+
+    def _clamp01(value: float) -> float:
+        return max(0.0, min(1.0, value))
+
+    if focus is not None and tension is not None:
+        f = _clamp01(float(focus))
+        t = _clamp01(float(tension))
+        stuck = 0.0
+        if raw_delta is not None:
+            try:
+                rd = float(raw_delta)
+            except (TypeError, ValueError):
+                rd = None
+            if rd is not None and math.isfinite(rd):
+                stuck = 1.0 / (1.0 + max(0.0, rd))
+        drive = max(t, 1.0 - f, stuck)
+        target_inertia = THERMO_INERTIA_MIN + (THERMO_INERTIA_MAX - THERMO_INERTIA_MIN) * (f * (1.0 - t))
+        target_deadzone = THERMO_DEADZONE_MIN + (THERMO_DEADZONE_MAX - THERMO_DEADZONE_MIN) * t
+        target_walk = THERMO_WALK_MIN + (THERMO_WALK_MAX - THERMO_WALK_MIN) * drive
+        blend = max(1e-3, 1.0 - THERMO_EMA)
+        model.ptr_inertia = model.ptr_inertia + (target_inertia - model.ptr_inertia) * blend
+        model.ptr_deadzone = model.ptr_deadzone + (target_deadzone - model.ptr_deadzone) * blend
+        model.ptr_walk_prob = model.ptr_walk_prob + (target_walk - model.ptr_walk_prob) * blend
         return ema
 
     if ema > THERMO_TARGET_FLIP:
@@ -582,6 +624,74 @@ def apply_inertia_auto(model, ptr_velocity, panic_active=False):
     model.ptr_inertia = ema
 
 
+def calculate_adaptive_vasc(batch_size, dwell, grad_norm, max_dwell_limit, ema_grad_norm, min_group_ratio=VASC_MIN_GROUP_RATIO):
+    """Scale-free VASC: choose shard count from ratio-based cohesion signals."""
+    eps = 1e-8
+    batch_size = int(batch_size)
+    if batch_size <= 0:
+        return 1, 0, 0.0, 0.0, 0.0
+
+    max_dwell_limit = max(eps, float(max_dwell_limit))
+    ema_grad_norm = max(eps, float(ema_grad_norm))
+
+    focus = max(0.0, min(1.0, float(dwell) / max_dwell_limit))
+    tension = max(0.0, min(1.0, float(grad_norm) / (ema_grad_norm + eps)))
+    cohesion = max(0.0, min(1.0, focus - tension))
+
+    ceiling = float(batch_size)
+    floor = max(1.0, ceiling * float(min_group_ratio))
+
+    target_group_size = floor + (ceiling - floor) * cohesion
+    raw_shards = ceiling / max(eps, target_group_size)
+
+    valid_counts = [c for c in range(1, batch_size + 1) if batch_size % c == 0]
+    shard_count = min(valid_counts, key=lambda c: abs(c - raw_shards)) if valid_counts else 1
+    shard_count = max(1, min(shard_count, batch_size))
+    group_size = batch_size // shard_count
+    return shard_count, group_size, focus, tension, cohesion
+
+
+class LocationExpertRouter(nn.Module):
+    def __init__(self, d_model: int, vocab_size: int, num_experts: int = 1):
+        super().__init__()
+        self.num_experts = max(1, int(num_experts))
+        if self.num_experts == 1:
+            self.single = nn.Linear(d_model, vocab_size)
+            self.experts = None
+        else:
+            self.single = None
+            self.experts = nn.ModuleList([nn.Linear(d_model, vocab_size) for _ in range(self.num_experts)])
+
+    def reset_parameters(self):
+        def init_layer(layer):
+            nn.init.xavier_uniform_(layer.weight)
+            if layer.bias is not None:
+                nn.init.zeros_(layer.bias)
+
+        if self.single is not None:
+            init_layer(self.single)
+        else:
+            for expert in self.experts:
+                init_layer(expert)
+
+    def forward(self, x: torch.Tensor, pointer_addresses: torch.Tensor | None = None) -> torch.Tensor:
+        if self.single is not None:
+            return self.single(x)
+
+        if pointer_addresses is None:
+            expert_indices = torch.zeros(x.shape[0], device=x.device, dtype=torch.long)
+        else:
+            expert_indices = pointer_addresses.to(torch.long, non_blocking=True) % self.num_experts
+
+        out_dtype = self.experts[0].weight.dtype
+        out = torch.zeros(x.shape[0], self.experts[0].out_features, device=x.device, dtype=out_dtype)
+        for i, expert in enumerate(self.experts):
+            mask = expert_indices == i
+            if mask.any():
+                out[mask] = expert(x[mask]).to(out_dtype)
+        return out
+
+
 class AbsoluteHallway(nn.Module):
     @staticmethod
     def wrap_delta(a, b, ring_range):
@@ -716,7 +826,7 @@ class AbsoluteHallway(nn.Module):
             self.phase_embed = nn.Parameter(torch.zeros(2, slot_dim))
         else:
             self.register_parameter("phase_embed", None)
-        self.head = nn.Linear(slot_dim, num_classes)
+        self.head = LocationExpertRouter(slot_dim, num_classes, num_experts=EXPERT_HEADS)
         # Learnable ring context scale (sigmoid-bounded) to avoid hard-coded mixing; init is configurable.
         c0 = max(1e-3, min(0.999, context_scale_init))
         logit = math.log(c0 / (1.0 - c0))
@@ -747,8 +857,8 @@ class AbsoluteHallway(nn.Module):
         nn.init.constant_(self.gru.bias_hh, gru_bias)
         nn.init.xavier_uniform_(self.jump_score.weight)
         nn.init.zeros_(self.jump_score.bias)
-        nn.init.xavier_uniform_(self.head.weight)
-        nn.init.zeros_(self.head.bias)
+        if hasattr(self.head, "reset_parameters"):
+            self.head.reset_parameters()
         if self.gate_head is not None:
             nn.init.xavier_uniform_(self.gate_head.weight)
             nn.init.zeros_(self.gate_head.bias)
@@ -850,13 +960,14 @@ class AbsoluteHallway(nn.Module):
         if self.bypass_ring:
             h = torch.zeros(B, self.slot_dim, device=device, dtype=x.dtype)
             movement_cost = torch.tensor(0.0, device=device, dtype=x.dtype)
+            pointer_addresses = torch.zeros(B, device=device, dtype=torch.long)
             for t in range(T):
                 inp = self.input_proj(x[:, t, :])
                 inp = self._apply_activation(inp)
                 nan_guard("inp", inp, t)
                 h = self.gru(inp, h)
                 nan_guard("upd", h, t)
-            logits = self.head(h)
+            logits = self.head(h, pointer_addresses)
             nan_guard("logits_final", logits, T)
             return logits, movement_cost
 
@@ -1019,7 +1130,16 @@ class AbsoluteHallway(nn.Module):
             if scale != 1.0:
                 contrib = contrib * scale
             contrib = contrib * active_mask.view(B, 1, 1).to(contrib.dtype)
-            state = state.scatter_add(1, pos_idx_exp, contrib)
+            # scatter_add under bf16 autocast can crash on some Windows/CUDA combos.
+            # Run this op in fp32, then cast back to preserve bf16 for the rest.
+            state_dtype = state.dtype
+            if state_dtype in (torch.float16, torch.bfloat16):
+                state_fp32 = state.float()
+                contrib_fp32 = contrib.float()
+                state_fp32 = state_fp32.scatter_add(1, pos_idx_exp, contrib_fp32)
+                state = state_fp32.to(state_dtype)
+            else:
+                state = state.scatter_add(1, pos_idx_exp, contrib)
             if STATE_CLIP > 0.0:
                 state = state.clamp(-STATE_CLIP, STATE_CLIP)
             if collect_xray and x.size(-1) > 1:
@@ -1282,7 +1402,7 @@ class AbsoluteHallway(nn.Module):
             if fused.dtype != h.dtype:
                 fused = fused.to(h.dtype)
             read_vec = fused + h
-            logits = self.head(read_vec)
+            logits = self.head(read_vec, ptr_int)
             nan_guard("logits_step", logits, t)
             if satiety_enabled:
                 probs = torch.softmax(logits, dim=1)
@@ -1309,7 +1429,7 @@ class AbsoluteHallway(nn.Module):
         if fused.dtype != h.dtype:
             fused = fused.to(h.dtype)
         read_vec = fused + h
-        logits = self.head(read_vec)
+        logits = self.head(read_vec, ptr_int)
         nan_guard("logits_final", logits, T)
 
         self.pointer_hist = hist.detach().cpu()
@@ -1920,8 +2040,9 @@ def train_wallclock(model, loader, dataset_name, model_name, num_classes, wall_c
         model.ptr_inertia_ema = model.ptr_inertia
 
     start = time.time()
-    # Disable wall-clock cutoff to allow indefinite runs unless externally stopped.
-    end_time = float("inf")
+    # Allow indefinite runs unless explicitly told to honor wall-clock limits.
+    ignore_wall_clock = os.environ.get("TP6_IGNORE_WALL_CLOCK") == "1"
+    end_time = float("inf") if ignore_wall_clock else (start + wall_clock)
     last_heartbeat = start
     last_live_trace = start
     step = 0
@@ -2009,43 +2130,68 @@ def train_wallclock(model, loader, dataset_name, model_name, num_classes, wall_c
                 local_shard_size = SHARD_SIZE
                 shard_count = None
                 traction = None
+                focus = None
+                tension = None
+                cohesion = None
+                batch_sz = outputs.shape[0]
+                dwell_val = getattr(model, "ptr_mean_dwell", 0.0)
+                try:
+                    dwell_val = float(dwell_val)
+                except Exception:
+                    dwell_val = 0.0
+                tension_val = grad_norm if "grad_norm" in locals() else 0.0
+                try:
+                    tension_val = float(tension_val)
+                except Exception:
+                    tension_val = 0.0
+
+                # Maintain dynamic dwell/grad references for scale-free VASC.
+                vasc_max_dwell = getattr(model, "vasc_max_dwell", None)
+                if vasc_max_dwell is None:
+                    vasc_max_dwell = max(1.0, dwell_val)
+                else:
+                    vasc_max_dwell = max(float(vasc_max_dwell), dwell_val, 1.0)
+                model.vasc_max_dwell = vasc_max_dwell
+
+                vasc_grad_ema = getattr(model, "vasc_grad_ema", None)
+                if vasc_grad_ema is None:
+                    vasc_grad_ema = max(1e-8, tension_val)
+                else:
+                    vasc_grad_ema = PTR_UPDATE_EMA * float(vasc_grad_ema) + (1.0 - PTR_UPDATE_EMA) * float(tension_val)
+                model.vasc_grad_ema = vasc_grad_ema
+
                 if SHARD_ENABLED and SHARD_ADAPT and SHARD_ADAPT_EVERY > 0 and (step % SHARD_ADAPT_EVERY == 0):
-                    batch_sz = outputs.shape[0]
-                    # Build valid shard counts (divisors) to avoid remainders.
-                    valid_counts = [c for c in range(1, batch_sz + 1) if batch_sz % c == 0]
-                    # Avoid tiny shards.
-                    max_shards = max(1, min(batch_sz // max(1, SHARD_MIN_PER_SHARD), batch_sz))
-                    # Simple cohesion: dwell pulls up (fuse), grad pulls down (shard).
-                    dwell_val = getattr(model, "ptr_mean_dwell", 0.0)
-                    try:
-                        dwell_val = float(dwell_val)
-                    except Exception:
-                        dwell_val = 0.0
-                    tension_val = grad_norm if "grad_norm" in locals() else 0.0
-                    try:
-                        tension_val = float(tension_val)
-                    except Exception:
-                        tension_val = 0.0
-                    focus = max(0.0, min(1.0, dwell_val / SHARD_ADAPT_DWELL)) if SHARD_ADAPT_DWELL > 0 else 0.0
-                    tension = max(0.0, min(1.0, tension_val / SHARD_ADAPT_GRAD)) if SHARD_ADAPT_GRAD > 0 else 0.0
-                    cohesion = max(0.0, min(1.0, 0.5 + focus - 0.5 * tension))
-                    target_shards = max(1, min(max_shards, round(max_shards * (1.0 - cohesion))))
-                    # Pick nearest valid shard count.
-                    shard_count = min(valid_counts, key=lambda c: abs(c - target_shards)) if valid_counts else 1
-                    shard_count = max(1, shard_count)
-                    local_shard_size = max(1, batch_sz // shard_count)
+                    shard_count, local_shard_size, focus, tension, cohesion = calculate_adaptive_vasc(
+                        batch_sz, dwell_val, tension_val, vasc_max_dwell, vasc_grad_ema
+                    )
                     if TRACTION_ENABLED:
-                        # Simple traction: focus vs flip/tension ratio.
+                        # Traction: dwell vs flip/tension ratio.
                         flip_val = getattr(model, "ptr_flip_rate", None)
                         try:
                             flip_val = float(flip_val) if flip_val is not None else 0.0
                         except Exception:
                             flip_val = 0.0
                         denom = max(1e-6, flip_val + tension_val)
-                        traction = (focus * SHARD_ADAPT_DWELL) / denom
-                    model.debug_shard_info = {"count": shard_count, "size": local_shard_size}
+                        traction = dwell_val / denom
+                    active_experts = None
+                    if EXPERT_HEADS > 1:
+                        last_ptr = getattr(model, "last_ptr_int", None)
+                        if last_ptr is not None:
+                            try:
+                                active_experts = int(torch.unique(last_ptr.to(torch.long) % EXPERT_HEADS).numel())
+                            except Exception:
+                                active_experts = None
+                    model.debug_shard_info = {
+                        "count": shard_count,
+                        "size": local_shard_size,
+                        "focus": focus,
+                        "tension": tension,
+                        "cohesion": cohesion,
+                    }
                     if traction is not None:
                         model.debug_shard_info["traction"] = traction
+                    if active_experts is not None:
+                        model.debug_shard_info["active_experts"] = active_experts
                 if SHARD_ENABLED and local_shard_size > 0 and outputs.shape[0] > local_shard_size:
                     # Sub-culture partitioning: split batch into shards, mean losses.
                     loss_parts = []
@@ -2075,7 +2221,7 @@ def train_wallclock(model, loader, dataset_name, model_name, num_classes, wall_c
             scaler.update()
 
             # Force small kernels to complete and keep the watchdog happy; clear cache frequently.
-            if DEVICE == "cuda":
+            if DEVICE == "cuda" and not DISABLE_SYNC:
                 torch.cuda.synchronize()
                 if step % 10 == 0:
                     torch.cuda.empty_cache()
@@ -2095,7 +2241,22 @@ def train_wallclock(model, loader, dataset_name, model_name, num_classes, wall_c
             if LOSS_KEEP > 0 and len(losses) > LOSS_KEEP:
                 losses = losses[-LOSS_KEEP:]
             if THERMO_ENABLED and hasattr(model, "ptr_flip_rate") and step % max(1, THERMO_EVERY) == 0:
-                flip_ema = apply_thermostat(model, float(model.ptr_flip_rate), flip_ema)
+                focus_ctl = focus
+                tension_ctl = tension
+                if (focus_ctl is None or tension_ctl is None) and getattr(model, "debug_shard_info", None):
+                    shard_info = model.debug_shard_info
+                    if focus_ctl is None:
+                        focus_ctl = shard_info.get("focus")
+                    if tension_ctl is None:
+                        tension_ctl = shard_info.get("tension")
+                flip_ema = apply_thermostat(
+                    model,
+                    float(model.ptr_flip_rate),
+                    flip_ema,
+                    focus=focus_ctl,
+                    tension=tension_ctl,
+                    raw_delta=getattr(model, "ptr_delta_raw_mean", None),
+                )
             if panic_reflex is not None:
                 ctrl = panic_reflex.update(float(loss))
                 panic_status = ctrl["status"]
@@ -2173,6 +2334,14 @@ def train_wallclock(model, loader, dataset_name, model_name, num_classes, wall_c
                     shard_text = f", shard={shard_info.get('count', '-')}/{shard_info.get('size', '-')}"
                     if TRACTION_ENABLED and "traction" in shard_info:
                         shard_text += f", traction={shard_info['traction']:.2f}"
+                    if "cohesion" in shard_info:
+                        shard_text += f", cohesion={shard_info['cohesion']:.2f}"
+                    if "focus" in shard_info:
+                        shard_text += f", focus={shard_info['focus']:.2f}"
+                    if "tension" in shard_info:
+                        shard_text += f", tension={shard_info['tension']:.2f}"
+                    if "active_experts" in shard_info:
+                        shard_text += f", experts={shard_info['active_experts']}"
                 ptr_stats = []
                 for label, val, fmt in [
                     ("flip", getattr(model, "ptr_flip_rate", None), "{:.3f}"),
@@ -2259,7 +2428,10 @@ def train_wallclock(model, loader, dataset_name, model_name, num_classes, wall_c
             if pulse_applied:
                 model.ptr_walk_prob = prev_walk_prob
             step += 1
-            # Skip early termination by MAX_STEPS; allow indefinite stepping.
+            # Respect MAX_STEPS unless explicitly disabled (used by infinite wrapper).
+            ignore_max_steps = os.environ.get("TP6_IGNORE_MAX_STEPS") == "1"
+            if (not ignore_max_steps) and MAX_STEPS > 0 and step >= MAX_STEPS:
+                break
             if SAVE_EVERY_STEPS > 0 and step % SAVE_EVERY_STEPS == 0:
                 loss_value = losses[-1] if losses else None
                 raw_delta = getattr(model, "ptr_delta_raw_mean", None)
@@ -2472,7 +2644,7 @@ def train_steps(model, loader, steps, dataset_name, model_name):
         scaler.step(optimizer)
         scaler.update()
 
-        if DEVICE == "cuda":
+        if DEVICE == "cuda" and not DISABLE_SYNC:
             torch.cuda.synchronize()
             if step % 10 == 0:
                 torch.cuda.empty_cache()
@@ -2489,7 +2661,20 @@ def train_steps(model, loader, steps, dataset_name, model_name):
             ptr_flip_sum += float(model.ptr_flip_rate)
             ptr_steps += 1
         if THERMO_ENABLED and step % max(1, THERMO_EVERY) == 0:
-            flip_ema = apply_thermostat(model, float(model.ptr_flip_rate), flip_ema)
+            focus_ctl = None
+            tension_ctl = None
+            if getattr(model, "debug_shard_info", None):
+                shard_info = model.debug_shard_info
+                focus_ctl = shard_info.get("focus")
+                tension_ctl = shard_info.get("tension")
+            flip_ema = apply_thermostat(
+                model,
+                float(model.ptr_flip_rate),
+                flip_ema,
+                focus=focus_ctl,
+                tension=tension_ctl,
+                raw_delta=getattr(model, "ptr_delta_raw_mean", None),
+            )
         if panic_reflex is not None:
             ctrl = panic_reflex.update(float(loss))
             panic_status = ctrl["status"]
@@ -2831,15 +3016,19 @@ def main():
 
     summary = []
 
-    # Synthetic short-circuit: if TP6_SYNTH=1, bypass MNIST entirely and run indefinitely.
+    # Synthetic short-circuit: if TP6_SYNTH=1, bypass MNIST entirely.
     synth_env = os.environ.get("TP6_SYNTH", "0").strip()
+    synth_once = os.environ.get("TP6_SYNTH_ONCE") == "1"
     if synth_env == "1":
         synth_loader, synth_classes, synth_collate = get_seq_mnist_loader()
         synth_eval_loader, eval_size = build_eval_loader_from_subset(
             synth_loader.dataset, input_collate=synth_collate
         )
         log_eval_overlap(synth_loader.dataset, synth_eval_loader.dataset, eval_size, "synth_subset")
-        # Run forever until manually stopped; no tournament summary/exit.
+        # Run once for probes; otherwise run forever until manually stopped.
+        if synth_once:
+            run_phase("synth", synth_loader, synth_eval_loader, input_dim=1, num_classes=synth_classes)
+            return
         while True:
             run_phase("synth", synth_loader, synth_eval_loader, input_dim=1, num_classes=synth_classes)
         return
@@ -2884,7 +3073,7 @@ def main():
 
     # Ensure GPU work is complete before writing summary to avoid partial/hung writes.
     # For synthetic indefinite run we skip summary writing and syncing to keep process alive.
-    if torch.cuda.is_available():
+    if torch.cuda.is_available() and not DISABLE_SYNC:
         torch.cuda.synchronize()
     if summary:
         summary_path = os.path.join(ROOT, "summaries", "current", "tournament_phase6_summary.json")
