@@ -8,7 +8,7 @@ from itertools import count
 import shutil
 import urllib.request
 import zipfile
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -672,6 +672,14 @@ LOSS_KEEP = CFG.loss_keep
 PHASE_A_STEPS = CFG.phase_a_steps
 PHASE_B_STEPS = CFG.phase_b_steps
 SYNTH_LEN = CFG.synth_len
+STAIRCASE_LENS_RAW = os.environ.get("TP6_STAIRCASE_LENS", "").strip()
+STAIRCASE_WEIGHTS_RAW = os.environ.get("TP6_STAIRCASE_WEIGHTS", "").strip()
+STAIRCASE_ENABLED = bool(STAIRCASE_LENS_RAW)
+STAIRCASE_ADAPT = os.environ.get("TP6_STAIRCASE_ADAPT", "0") == "1"
+STAIRCASE_ADAPT_EVERY = int(os.environ.get("TP6_STAIRCASE_ADAPT_EVERY", "2000"))
+STAIRCASE_MIN_BASE = float(os.environ.get("TP6_STAIRCASE_MIN_BASE", "0.60"))
+STAIRCASE_SHIFT = float(os.environ.get("TP6_STAIRCASE_SHIFT", "0.02"))
+STAIRCASE_STABLE_STD = float(os.environ.get("TP6_STAIRCASE_STABLE_STD", "0.02"))
 SYNTH_SHUFFLE = CFG.synth_shuffle
 SYNTH_MODE = CFG.synth_mode
 HAND_MIN = CFG.hand_min
@@ -806,6 +814,138 @@ def sync_current_to_last() -> None:
             src = os.path.join(src_dir, name)
             if os.path.isfile(src):
                 shutil.copy2(src, os.path.join(dest_dir, name))
+
+
+def _parse_csv_ints(raw: str) -> Optional[List[int]]:
+    parts = [part.strip() for part in raw.split(",") if part.strip()]
+    items: List[int] = []
+    for part in parts:
+        try:
+            value = int(part)
+        except ValueError:
+            return None
+        if value <= 0:
+            return None
+        items.append(value)
+    return items or None
+
+
+def _parse_csv_floats(raw: str) -> Optional[List[float]]:
+    parts = [part.strip() for part in raw.split(",") if part.strip()]
+    items: List[float] = []
+    for part in parts:
+        try:
+            value = float(part)
+        except ValueError:
+            return None
+        items.append(value)
+    return items or None
+
+
+def _normalize_weights(weights: List[float]) -> List[float]:
+    total = sum(max(0.0, float(w)) for w in weights)
+    if total <= 0.0:
+        return [1.0 / len(weights)] * len(weights)
+    return [max(0.0, float(w)) / total for w in weights]
+
+
+def _default_staircase_weights(lens: List[int]) -> List[float]:
+    if len(lens) == 3 and lens[0] == 512 and lens[1] == 768 and lens[2] == 1024:
+        return [0.95, 0.04, 0.01]
+    return [1.0 / len(lens)] * len(lens)
+
+
+class StaircaseController:
+    def __init__(
+        self,
+        lens: List[int],
+        weights: List[float],
+        min_base: float,
+        shift: float,
+        stable_std: float,
+        adapt_every: int,
+    ) -> None:
+        self.lens = list(lens)
+        self.weights = _normalize_weights(weights)
+        self.min_base = float(min_base)
+        self.shift = float(shift)
+        self.stable_std = float(stable_std)
+        self.adapt_every = int(adapt_every)
+
+    def set_weights(self, weights: List[float]) -> None:
+        self.weights = _normalize_weights(weights)
+
+    def maybe_adapt(self, losses: List[float], step: int) -> Optional[List[float]]:
+        if self.adapt_every <= 0 or step <= 0 or step % self.adapt_every != 0:
+            return None
+        if not losses:
+            return None
+        window = min(len(losses), max(10, AGC_PLATEAU_WINDOW or 50))
+        recent = losses[-window:]
+        mean_recent = sum(recent) / len(recent)
+        var_recent = sum((x - mean_recent) ** 2 for x in recent) / len(recent)
+        std_recent = math.sqrt(var_recent)
+        if not math.isfinite(std_recent) or std_recent > self.stable_std:
+            return None
+        if len(self.weights) < 2:
+            return None
+        base_weight = self.weights[0]
+        if base_weight <= self.min_base:
+            return None
+        delta = min(self.shift, base_weight - self.min_base)
+        if delta <= 0.0:
+            return None
+        per_other = delta / (len(self.weights) - 1)
+        new_weights = [base_weight - delta]
+        for idx in range(1, len(self.weights)):
+            new_weights.append(self.weights[idx] + per_other)
+        new_weights = _normalize_weights(new_weights)
+        self.weights = new_weights
+        log(f"[staircase] shift base by {delta:.3f} -> weights={new_weights}")
+        return new_weights
+
+
+class StaircaseBatcher:
+    def __init__(
+        self,
+        loaders: List[torch.utils.data.DataLoader],
+        weights: List[float],
+        rng_seed: int,
+        staircase: Optional[StaircaseController] = None,
+    ) -> None:
+        self.loaders = list(loaders)
+        self.weights = _normalize_weights(weights)
+        self._iters = [iter(loader) for loader in self.loaders]
+        self._rng = random.Random(rng_seed)
+        self.dataset = self.loaders[0].dataset if self.loaders else None
+        self.staircase = staircase
+
+    def set_weights(self, weights: List[float]) -> None:
+        self.weights = _normalize_weights(weights)
+        if self.staircase is not None:
+            self.staircase.set_weights(self.weights)
+
+    def __iter__(self):
+        return self
+
+    def _pick_index(self) -> int:
+        r = self._rng.random()
+        acc = 0.0
+        for idx, weight in enumerate(self.weights):
+            acc += weight
+            if r <= acc:
+                return idx
+        return len(self.weights) - 1
+
+    def __next__(self):
+        if not self.loaders:
+            raise StopIteration
+        idx = self._pick_index()
+        try:
+            return next(self._iters[idx])
+        except StopIteration:
+            self._iters[idx] = iter(self.loaders[idx])
+            return next(self._iters[idx])
 
 
 def nan_guard(name: str, tensor: torch.Tensor, step: int) -> None:
@@ -996,6 +1136,23 @@ class AbsoluteHallway(nn.Module):
             self.register_buffer("state_loop_proj", proj)
         else:
             self.register_buffer("state_loop_proj", torch.empty(0))
+        sensory_flag = os.environ.get("TP6_SENSORY_RING", "1").strip().lower()
+        self.sensory_enabled = sensory_flag not in {"0", "false", "off", "no"}
+        sensory_len_env = os.environ.get("TP6_SENSORY_RING_LEN")
+        sensory_dim_env = os.environ.get("TP6_SENSORY_SLOT_DIM")
+        default_sensory_len = max(1, self.ring_len // 2)
+        default_sensory_dim = max(8, self.slot_dim // 3)
+        self.sensory_len = max(1, int(sensory_len_env)) if sensory_len_env else default_sensory_len
+        self.sensory_dim = max(8, int(sensory_dim_env)) if sensory_dim_env else default_sensory_dim
+        if self.sensory_enabled:
+            # Small sensory ring: converts raw input into a richer sequence for the core ring.
+            self.sensory_proj_in = nn.Linear(input_dim, self.sensory_dim)
+            self.sensory_gru = nn.GRUCell(self.sensory_dim, self.sensory_dim)
+            self.sensory_bridge = nn.Linear(self.sensory_dim, slot_dim)
+        else:
+            self.sensory_proj_in = None
+            self.sensory_gru = None
+            self.sensory_bridge = None
         self.input_proj = nn.Linear(input_dim, slot_dim)
         self.gru = nn.GRUCell(slot_dim, slot_dim)
         self.jump_score = nn.Linear(slot_dim, 1)
@@ -1035,6 +1192,15 @@ class AbsoluteHallway(nn.Module):
         nn.init.uniform_(self.theta_gate_reduced, -0.5, 0.5)
         nn.init.xavier_uniform_(self.input_proj.weight)
         nn.init.zeros_(self.input_proj.bias)
+        if self.sensory_enabled:
+            nn.init.xavier_uniform_(self.sensory_proj_in.weight)
+            nn.init.zeros_(self.sensory_proj_in.bias)
+            nn.init.normal_(self.sensory_gru.weight_ih, mean=0.0, std=0.05)
+            nn.init.normal_(self.sensory_gru.weight_hh, mean=0.0, std=0.05)
+            nn.init.zeros_(self.sensory_gru.bias_ih)
+            nn.init.zeros_(self.sensory_gru.bias_hh)
+            nn.init.xavier_uniform_(self.sensory_bridge.weight)
+            nn.init.zeros_(self.sensory_bridge.bias)
         # Adjust GRU power smoothly by ring length to avoid runaway accumulation on long tasks.
         # std interpolates 0.1 -> 0.05 as ring_len goes 0 -> 200 (clamped), bias 0.5 -> 0.2.
         f = max(0.0, min(1.0, self.ring_len / 200.0))
@@ -1180,13 +1346,31 @@ class AbsoluteHallway(nn.Module):
         device = x.device
         ring_range = self.ring_range
         ptr_dtype = PTR_DTYPE
+        sensory_seq = None
+        if self.sensory_enabled:
+            s_state = torch.zeros(B, self.sensory_len, self.sensory_dim, device=device, dtype=x.dtype)
+            s_h = torch.zeros(B, self.sensory_dim, device=device, dtype=x.dtype)
+            s_ptr = torch.zeros(B, device=device, dtype=torch.long)
+            s_out = []
+            for t in range(T):
+                s_inp = self.sensory_proj_in(x[:, t, :])
+                s_inp = self._apply_activation(s_inp)
+                s_ctx = s_state[torch.arange(B, device=device), s_ptr]
+                s_h = self.sensory_gru(s_inp + s_ctx, s_h)
+                s_state[torch.arange(B, device=device), s_ptr] = s_h
+                s_out.append(s_h)
+                s_ptr = (s_ptr + 1) % self.sensory_len
+            sensory_seq = torch.stack(s_out, dim=1)
         # Diagnostic bypass: skip ring read/write and use GRU output directly.
         if self.bypass_ring:
             h = torch.zeros(B, self.slot_dim, device=device, dtype=x.dtype)
             movement_cost = torch.tensor(0.0, device=device, dtype=x.dtype)
             pointer_addresses = torch.zeros(B, device=device, dtype=torch.long)
             for t in range(T):
-                inp = self.input_proj(x[:, t, :])
+                if self.sensory_enabled:
+                    inp = self.sensory_bridge(sensory_seq[:, t, :])
+                else:
+                    inp = self.input_proj(x[:, t, :])
                 inp = self._apply_activation(inp)
                 nan_guard("inp", inp, t)
                 h = self.gru(inp, h)
@@ -1299,7 +1483,10 @@ class AbsoluteHallway(nn.Module):
                 decay_vec = active_mask.to(state.dtype) * decay + (~active_mask).to(state.dtype)
                 state = state * decay_vec.view(B, 1, 1)
 
-            inp = self.input_proj(x[:, t, :])  # [B, slot_dim]
+            if self.sensory_enabled:
+                inp = self.sensory_bridge(sensory_seq[:, t, :])
+            else:
+                inp = self.input_proj(x[:, t, :])  # [B, slot_dim]
             inp = self._apply_activation(inp)
             nan_guard("inp", inp, t)
             # Gaussian soft neighborhood over offsets [-K..K]
@@ -1873,12 +2060,36 @@ def get_seq_mnist_loader():
         base_seq_len = max(1, int(SYNTH_LEN))
         SYNTH_META.update({"enabled": True, "mode": synth_mode, "synth_len": base_seq_len})
         n_samples = max(1, MAX_SAMPLES)
+        staircase_lens = _parse_csv_ints(STAIRCASE_LENS_RAW) if STAIRCASE_ENABLED else None
+        if STAIRCASE_ENABLED and not staircase_lens:
+            log(f"[staircase] invalid lens '{STAIRCASE_LENS_RAW}', disabling")
+        staircase_weights = None
+        if staircase_lens:
+            if STAIRCASE_WEIGHTS_RAW:
+                staircase_weights = _parse_csv_floats(STAIRCASE_WEIGHTS_RAW)
+                if not staircase_weights or len(staircase_weights) != len(staircase_lens):
+                    log(f"[staircase] invalid weights '{STAIRCASE_WEIGHTS_RAW}', using defaults")
+                    staircase_weights = None
+            if staircase_weights is None:
+                staircase_weights = _default_staircase_weights(staircase_lens)
+
+        def _wrap_dataset(x_src: torch.Tensor, y_src: torch.Tensor):
+            class _SynthDataset(torch.utils.data.Dataset):
+                def __len__(self):
+                    return x_src.size(0)
+
+                def __getitem__(self, item):
+                    return x_src[item], y_src[item]
+
+            def collate(batch):
+                xs, ys = zip(*batch)
+                return torch.stack(xs, dim=0), torch.tensor(ys, dtype=torch.long)
+
+            return _SynthDataset(), collate
         if synth_mode == "assoc_clean":
-            seq_len = base_seq_len
             pairs = max(1, int(ASSOC_PAIRS))
             keys = max(2, int(ASSOC_KEYS))
             min_len = pairs * 2 + 1
-            bump_attempts = 0
             max_bumps = 5
 
             def _build_assoc(seq_len_local: int):
@@ -1911,40 +2122,74 @@ def get_seq_mnist_loader():
                     y_local[idx] = q_val
                 return x_local, y_local
 
-            if seq_len < min_len:
-                log(f"[synth] assoc_clean bump len from {seq_len} to {min_len} (min_len)")
-                seq_len = min_len
+            def _make_assoc_clean(seq_len_local: int):
+                seq_len = seq_len_local
+                bump_attempts = 0
+                if seq_len < min_len:
+                    log(f"[synth] assoc_clean bump len from {seq_len} to {min_len} (min_len)")
+                    seq_len = min_len
+                x = None
+                y = None
+                while bump_attempts <= max_bumps:
+                    x, y = _build_assoc(seq_len)
+                    if x is not None:
+                        break
+                    bump_attempts += 1
+                    new_len = seq_len + max(2, pairs) * 2
+                    log(f"[synth] assoc_clean bump len from {seq_len} to {new_len} (placement failed)")
+                    seq_len = new_len
+                if x is None:
+                    raise RuntimeError("assoc_clean: failed to place non-overlapping pairs after bumps")
+                return x, y, seq_len
 
-            x = None
-            y = None
-            while bump_attempts <= max_bumps:
-                x, y = _build_assoc(seq_len)
-                if x is not None:
-                    break
-                bump_attempts += 1
-                new_len = seq_len + max(2, pairs) * 2
-                log(f"[synth] assoc_clean bump len from {seq_len} to {new_len} (placement failed)")
-                seq_len = new_len
+            if staircase_lens:
+                loaders = []
+                lens_actual = []
+                for seq_len_local in staircase_lens:
+                    x, y, used_len = _make_assoc_clean(seq_len_local)
+                    ds, collate = _wrap_dataset(x, y)
+                    loader = DataLoader(
+                        ds,
+                        batch_size=BATCH_SIZE,
+                        shuffle=True,
+                        num_workers=0,
+                        pin_memory=False,
+                        collate_fn=collate,
+                    )
+                    loaders.append(loader)
+                    lens_actual.append(used_len)
+                num_classes = 2
+                if lens_actual != staircase_lens:
+                    log(f"[staircase] assoc_clean adjusted lens {staircase_lens} -> {lens_actual}")
+                staircase = StaircaseController(
+                    lens_actual,
+                    staircase_weights,
+                    STAIRCASE_MIN_BASE,
+                    STAIRCASE_SHIFT,
+                    STAIRCASE_STABLE_STD,
+                    STAIRCASE_ADAPT_EVERY,
+                )
+                batcher = StaircaseBatcher(loaders, staircase_weights, SEED, staircase=staircase)
+                SYNTH_META.update(
+                    {
+                        "assoc_keys": keys,
+                        "assoc_pairs": pairs,
+                        "synth_len": lens_actual[0] if lens_actual else base_seq_len,
+                        "staircase_lens": lens_actual,
+                        "staircase_weights": staircase.weights,
+                    }
+                )
+                log(
+                    f"[synth] mode=assoc_clean rows={int(n_samples)} keys={keys} pairs={pairs} "
+                    f"lens={lens_actual} weights={staircase.weights}"
+                )
+                return batcher, num_classes, collate
 
-            if x is None:
-                raise RuntimeError("assoc_clean: failed to place non-overlapping pairs after bumps")
-
+            x, y, seq_len = _make_assoc_clean(base_seq_len)
             SYNTH_META.update({"assoc_keys": keys, "assoc_pairs": pairs, "synth_len": seq_len})
             num_classes = 2
             log(f"[synth] mode=assoc_clean rows={int(n_samples)} keys={keys} pairs={pairs} len={seq_len}")
-            class _Synth(torch.utils.data.Dataset):
-                def __len__(self):
-                    return n_samples
-
-                def __getitem__(self, item):
-                    return x[item], y[item]
-
-            ds = _Synth()
-
-            def collate(batch):
-                xs, ys = zip(*batch)
-                return torch.stack(xs, dim=0), torch.tensor(ys, dtype=torch.long)
-
+            ds, collate = _wrap_dataset(x, y)
             loader = DataLoader(
                 ds,
                 batch_size=BATCH_SIZE,
@@ -1955,12 +2200,10 @@ def get_seq_mnist_loader():
             )
             return loader, num_classes, collate
         elif synth_mode == "assoc_byte":
-            seq_len = base_seq_len
             pairs = max(1, int(ASSOC_PAIRS))
             keys = max(2, int(ASSOC_KEYS))
             val_range = max(2, int(ASSOC_VAL_RANGE))
             min_len = pairs * 2 + 1
-            bump_attempts = 0
             max_bumps = 5
 
             def _build_assoc_byte(seq_len_local: int):
@@ -1993,24 +2236,71 @@ def get_seq_mnist_loader():
                     y_local[idx] = q_val
                 return x_local, y_local
 
-            if seq_len < min_len:
-                log(f"[synth] assoc_byte bump len from {seq_len} to {min_len} (min_len)")
-                seq_len = min_len
+            def _make_assoc_byte(seq_len_local: int):
+                seq_len = seq_len_local
+                bump_attempts = 0
+                if seq_len < min_len:
+                    log(f"[synth] assoc_byte bump len from {seq_len} to {min_len} (min_len)")
+                    seq_len = min_len
+                x = None
+                y = None
+                while bump_attempts <= max_bumps:
+                    x, y = _build_assoc_byte(seq_len)
+                    if x is not None:
+                        break
+                    bump_attempts += 1
+                    new_len = seq_len + max(2, pairs) * 2
+                    log(f"[synth] assoc_byte bump len from {seq_len} to {new_len} (placement failed)")
+                    seq_len = new_len
+                if x is None:
+                    raise RuntimeError("assoc_byte: failed to place non-overlapping pairs after bumps")
+                return x, y, seq_len
 
-            x = None
-            y = None
-            while bump_attempts <= max_bumps:
-                x, y = _build_assoc_byte(seq_len)
-                if x is not None:
-                    break
-                bump_attempts += 1
-                new_len = seq_len + max(2, pairs) * 2
-                log(f"[synth] assoc_byte bump len from {seq_len} to {new_len} (placement failed)")
-                seq_len = new_len
+            if staircase_lens:
+                loaders = []
+                lens_actual = []
+                for seq_len_local in staircase_lens:
+                    x, y, used_len = _make_assoc_byte(seq_len_local)
+                    ds, collate = _wrap_dataset(x, y)
+                    loader = DataLoader(
+                        ds,
+                        batch_size=BATCH_SIZE,
+                        shuffle=True,
+                        num_workers=0,
+                        pin_memory=False,
+                        collate_fn=collate,
+                    )
+                    loaders.append(loader)
+                    lens_actual.append(used_len)
+                num_classes = val_range
+                if lens_actual != staircase_lens:
+                    log(f"[staircase] assoc_byte adjusted lens {staircase_lens} -> {lens_actual}")
+                staircase = StaircaseController(
+                    lens_actual,
+                    staircase_weights,
+                    STAIRCASE_MIN_BASE,
+                    STAIRCASE_SHIFT,
+                    STAIRCASE_STABLE_STD,
+                    STAIRCASE_ADAPT_EVERY,
+                )
+                batcher = StaircaseBatcher(loaders, staircase_weights, SEED, staircase=staircase)
+                SYNTH_META.update(
+                    {
+                        "assoc_keys": keys,
+                        "assoc_pairs": pairs,
+                        "assoc_val_range": val_range,
+                        "synth_len": lens_actual[0] if lens_actual else base_seq_len,
+                        "staircase_lens": lens_actual,
+                        "staircase_weights": staircase.weights,
+                    }
+                )
+                log(
+                    f"[synth] mode=assoc_byte rows={int(n_samples)} keys={keys} vals={val_range} "
+                    f"pairs={pairs} lens={lens_actual} weights={staircase.weights}"
+                )
+                return batcher, num_classes, collate
 
-            if x is None:
-                raise RuntimeError("assoc_byte: failed to place non-overlapping pairs after bumps")
-
+            x, y, seq_len = _make_assoc_byte(base_seq_len)
             SYNTH_META.update(
                 {"assoc_keys": keys, "assoc_pairs": pairs, "assoc_val_range": val_range, "synth_len": seq_len}
             )
@@ -2019,20 +2309,7 @@ def get_seq_mnist_loader():
                 f"[synth] mode=assoc_byte rows={int(n_samples)} keys={keys} vals={val_range} "
                 f"pairs={pairs} len={seq_len}"
             )
-
-            class _SynthByte(torch.utils.data.Dataset):
-                def __len__(self):
-                    return n_samples
-
-                def __getitem__(self, item):
-                    return x[item], y[item]
-
-            ds = _SynthByte()
-
-            def collate(batch):
-                xs, ys = zip(*batch)
-                return torch.stack(xs, dim=0), torch.tensor(ys, dtype=torch.long)
-
+            ds, collate = _wrap_dataset(x, y)
             loader = DataLoader(
                 ds,
                 batch_size=BATCH_SIZE,
@@ -2043,12 +2320,10 @@ def get_seq_mnist_loader():
             )
             return loader, num_classes, collate
         elif synth_mode == "assoc_mix":
-            seq_len = base_seq_len
             pairs = max(1, int(ASSOC_PAIRS))
             keys = max(2, int(ASSOC_KEYS))
             val_range = max(2, int(ASSOC_VAL_RANGE))
             min_len = pairs * 2 + 1
-            bump_attempts = 0
             max_bumps = 5
             n_samples_int = int(n_samples)
             n_clean = n_samples_int // 2
@@ -2114,62 +2389,114 @@ def get_seq_mnist_loader():
                     y_local[idx] = q_val
                 return x_local, y_local
 
-            if seq_len < min_len:
-                log(f"[synth] assoc_mix bump len from {seq_len} to {min_len} (min_len)")
-                seq_len = min_len
-
-            x_clean = None
-            y_clean = None
-            x_byte = None
-            y_byte = None
-            while bump_attempts <= max_bumps:
-                x_clean, y_clean = _build_assoc_clean(seq_len, n_clean)
-                x_byte, y_byte = _build_assoc_byte(seq_len, n_byte)
-                if x_clean is not None and x_byte is not None:
-                    break
-                bump_attempts += 1
-                new_len = seq_len + max(2, pairs) * 2
-                log(f"[synth] assoc_mix bump len from {seq_len} to {new_len} (placement failed)")
-                seq_len = new_len
-
-            if x_clean is None or x_byte is None:
-                raise RuntimeError("assoc_mix: failed to place non-overlapping pairs after bumps")
-
             mix_offset = float(os.environ.get("TP6_ASSOC_MIX_OFFSET", "100.0"))
             mix_clean_offset = float(os.environ.get("TP6_ASSOC_MIX_CLEAN_OFFSET", "0.0"))
             mix_domain_token = os.environ.get("TP6_ASSOC_MIX_DOMAIN_TOKEN") == "1"
             mix_clean_sentinel = float(os.environ.get("TP6_ASSOC_MIX_CLEAN_SENTINEL", "50.0"))
             mix_byte_sentinel = float(os.environ.get("TP6_ASSOC_MIX_BYTE_SENTINEL", "150.0"))
-            if mix_clean_offset:
-                # Shift only key/query tokens (positive) to preserve value token sign.
-                mask = x_clean > 0
-                x_clean[mask] = x_clean[mask] + mix_clean_offset
-            if mix_offset:
-                # Shift only key/query tokens (positive) to preserve value token sign.
-                mask = x_byte > 0
-                x_byte[mask] = x_byte[mask] + mix_offset
-            if mix_domain_token:
-                # Safe sentinel: prepend a domain token without overwriting data.
-                def _prepend_domain_token(x_src, token):
-                    x_pad = torch.zeros(
-                        (x_src.size(0), x_src.size(1) + 1, x_src.size(2)),
-                        dtype=x_src.dtype,
+
+            def _prepend_domain_token(x_src, token):
+                x_pad = torch.zeros(
+                    (x_src.size(0), x_src.size(1) + 1, x_src.size(2)),
+                    dtype=x_src.dtype,
+                )
+                x_pad[:, 1:, :] = x_src
+                x_pad[:, 0, 0] = token
+                return x_pad
+
+            def _make_assoc_mix(seq_len_local: int):
+                seq_len = seq_len_local
+                bump_attempts = 0
+                if seq_len < min_len:
+                    log(f"[synth] assoc_mix bump len from {seq_len} to {min_len} (min_len)")
+                    seq_len = min_len
+                x_clean = None
+                y_clean = None
+                x_byte = None
+                y_byte = None
+                while bump_attempts <= max_bumps:
+                    x_clean, y_clean = _build_assoc_clean(seq_len, n_clean)
+                    x_byte, y_byte = _build_assoc_byte(seq_len, n_byte)
+                    if x_clean is not None and x_byte is not None:
+                        break
+                    bump_attempts += 1
+                    new_len = seq_len + max(2, pairs) * 2
+                    log(f"[synth] assoc_mix bump len from {seq_len} to {new_len} (placement failed)")
+                    seq_len = new_len
+                if x_clean is None or x_byte is None:
+                    raise RuntimeError("assoc_mix: failed to place non-overlapping pairs after bumps")
+                if mix_clean_offset:
+                    mask = x_clean > 0
+                    x_clean[mask] = x_clean[mask] + mix_clean_offset
+                if mix_offset:
+                    mask = x_byte > 0
+                    x_byte[mask] = x_byte[mask] + mix_offset
+                if mix_domain_token:
+                    x_clean = _prepend_domain_token(x_clean, mix_clean_sentinel)
+                    x_byte = _prepend_domain_token(x_byte, mix_byte_sentinel)
+                    seq_len = seq_len + 1
+                y_byte = y_byte + 2
+                x = torch.cat([x_clean, x_byte], dim=0)
+                y = torch.cat([y_clean, y_byte], dim=0)
+                perm = torch.randperm(x.size(0))
+                x = x[perm]
+                y = y[perm]
+                return x, y, seq_len
+
+            if staircase_lens:
+                loaders = []
+                lens_actual = []
+                for seq_len_local in staircase_lens:
+                    x, y, used_len = _make_assoc_mix(seq_len_local)
+                    ds, collate = _wrap_dataset(x, y)
+                    loader = DataLoader(
+                        ds,
+                        batch_size=BATCH_SIZE,
+                        shuffle=True,
+                        num_workers=0,
+                        pin_memory=False,
+                        collate_fn=collate,
                     )
-                    x_pad[:, 1:, :] = x_src
-                    x_pad[:, 0, 0] = token
-                    return x_pad
+                    loaders.append(loader)
+                    lens_actual.append(used_len)
+                num_classes = val_range + 2
+                if lens_actual != staircase_lens:
+                    log(f"[staircase] assoc_mix adjusted lens {staircase_lens} -> {lens_actual}")
+                staircase = StaircaseController(
+                    lens_actual,
+                    staircase_weights,
+                    STAIRCASE_MIN_BASE,
+                    STAIRCASE_SHIFT,
+                    STAIRCASE_STABLE_STD,
+                    STAIRCASE_ADAPT_EVERY,
+                )
+                batcher = StaircaseBatcher(loaders, staircase_weights, SEED, staircase=staircase)
+                SYNTH_META.update(
+                    {
+                        "assoc_keys": keys,
+                        "assoc_pairs": pairs,
+                        "assoc_val_range": val_range,
+                        "synth_len": lens_actual[0] if lens_actual else base_seq_len,
+                        "assoc_mix_clean": int(n_clean),
+                        "assoc_mix_byte": int(n_byte),
+                        "assoc_mix_offset": mix_offset,
+                        "assoc_mix_clean_offset": mix_clean_offset,
+                        "assoc_mix_domain_token": int(mix_domain_token),
+                        "assoc_mix_clean_sentinel": mix_clean_sentinel,
+                        "assoc_mix_byte_sentinel": mix_byte_sentinel,
+                        "staircase_lens": lens_actual,
+                        "staircase_weights": staircase.weights,
+                    }
+                )
+                log(
+                    f"[synth] mode=assoc_mix rows={int(n_samples_int)} clean={n_clean} byte={n_byte} "
+                    f"keys={keys} vals={val_range} pairs={pairs} lens={lens_actual} "
+                    f"offsets=clean:{mix_clean_offset:g} byte:{mix_offset:g} "
+                    f"sentinel={int(mix_domain_token)} weights={staircase.weights}"
+                )
+                return batcher, num_classes, collate
 
-                x_clean = _prepend_domain_token(x_clean, mix_clean_sentinel)
-                x_byte = _prepend_domain_token(x_byte, mix_byte_sentinel)
-                seq_len = seq_len + 1
-
-            y_byte = y_byte + 2
-            x = torch.cat([x_clean, x_byte], dim=0)
-            y = torch.cat([y_clean, y_byte], dim=0)
-            perm = torch.randperm(x.size(0))
-            x = x[perm]
-            y = y[perm]
-
+            x, y, seq_len = _make_assoc_mix(base_seq_len)
             SYNTH_META.update(
                 {
                     "assoc_keys": keys,
@@ -2192,20 +2519,7 @@ def get_seq_mnist_loader():
                 f"offsets=clean:{mix_clean_offset:g} byte:{mix_offset:g} "
                 f"sentinel={int(mix_domain_token)}"
             )
-
-            class _SynthMix(torch.utils.data.Dataset):
-                def __len__(self):
-                    return x.size(0)
-
-                def __getitem__(self, item):
-                    return x[item], y[item]
-
-            ds = _SynthMix()
-
-            def collate(batch):
-                xs, ys = zip(*batch)
-                return torch.stack(xs, dim=0), torch.tensor(ys, dtype=torch.long)
-
+            ds, collate = _wrap_dataset(x, y)
             loader = DataLoader(
                 ds,
                 batch_size=BATCH_SIZE,
@@ -2894,6 +3208,12 @@ def train_wallclock(model, loader, dataset_name, model_name, num_classes, wall_c
                         model.update_scale = min(getattr(model, "update_scale", new_cap), new_cap)
             if LOSS_KEEP > 0 and len(losses) > LOSS_KEEP:
                 losses = losses[-LOSS_KEEP:]
+            if STAIRCASE_ENABLED and STAIRCASE_ADAPT:
+                staircase = getattr(loader, "staircase", None)
+                if staircase is not None:
+                    new_weights = staircase.maybe_adapt(losses, step)
+                    if new_weights is not None:
+                        loader.set_weights(new_weights)
             if THERMO_ENABLED and hasattr(model, "ptr_flip_rate") and step % max(1, THERMO_EVERY) == 0:
                 focus_ctl = focus
                 tension_ctl = tension
@@ -3790,6 +4110,12 @@ def train_steps(model, loader, steps, dataset_name, model_name):
                 torch.cuda.empty_cache()
 
         losses.append(loss.item())
+        if STAIRCASE_ENABLED and STAIRCASE_ADAPT:
+            staircase = getattr(loader, "staircase", None)
+            if staircase is not None:
+                new_weights = staircase.maybe_adapt(losses, step)
+                if new_weights is not None:
+                    loader.set_weights(new_weights)
         if hasattr(model, "pointer_hist"):
             if pointer_hist_sum is None:
                 pointer_hist_sum = model.pointer_hist.clone()
