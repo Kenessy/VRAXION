@@ -184,6 +184,9 @@ USAGE_LAMBDA_ETA = float(os.environ.get("TP6_USAGE_LAMBDA_ETA", "0.05"))
 USAGE_GATE_CONF = float(os.environ.get("TP6_USAGE_GATE_CONF", "0.95"))
 USAGE_GATE_EVAL = os.environ.get("TP6_USAGE_GATE_EVAL", "0") == "1"
 USAGE_EMA_BETA = float(os.environ.get("TP6_USAGE_EMA_BETA", "0.9"))
+USAGE_REMAP_ENABLED = os.environ.get("TP6_USAGE_REMAP", "0") == "1"
+USAGE_REMAP_EVERY = int(os.environ.get("TP6_USAGE_REMAP_EVERY", "50"))
+USAGE_REMAP_MODE = os.environ.get("TP6_USAGE_REMAP_MODE", "round_robin").strip().lower()
 METABOLIC_SIM_THRESH = float(os.environ.get("TP6_METABOLIC_SIM_THRESH", "0.98"))
 METABOLIC_EVERY = int(os.environ.get("TP6_METABOLIC_EVERY", "500"))
 METABOLIC_IDLE_STEPS = int(os.environ.get("TP6_METABOLIC_IDLE_STEPS", "2000"))
@@ -714,6 +717,8 @@ class AbsoluteHallway(nn.Module):
         self.ptr_update_target_flip = PTR_UPDATE_TARGET_FLIP
         self.ptr_update_ema = PTR_UPDATE_EMA
         self.ptr_update_ema_state = None
+        self.usage_soft_enabled = os.environ.get("TP6_USAGE_SOFT", "0") == "1"
+        self.usage_soft_temp = float(os.environ.get("TP6_USAGE_SOFT_TEMP", "0.5"))
         self.ptr_gate_mode = PTR_GATE_MODE
         self.ptr_gate_steps = set()
         if self.ptr_gate_mode == "steps" and PTR_GATE_STEPS:
@@ -2566,19 +2571,37 @@ def train_wallclock(model, loader, dataset_name, model_name, num_classes, wall_c
                             if USAGE_GATE_EVAL:
                                 eval_acc_val = getattr(model, "last_eval_acc", None)
                                 gate_ok = eval_acc_val is not None and float(eval_acc_val) >= USAGE_GATE_CONF
+                                model.usage_conf = float(eval_acc_val) if eval_acc_val is not None else None
                             else:
                                 confidence = 1.0 / (1.0 + loss_ema)
                                 gate_ok = confidence >= USAGE_GATE_CONF
+                                model.usage_conf = confidence
+                            model.usage_gate_ok = bool(gate_ok)
                             if gate_ok:
                                 usage_lambda = min(USAGE_LAMBDA_MAX, usage_lambda + (USAGE_LAMBDA_ETA * usage_ema))
                                 loss = loss + (loss.new_tensor(usage_ratio) * usage_lambda)
+                                if USAGE_REMAP_ENABLED and usage_ratio > 0 and step % max(1, USAGE_REMAP_EVERY) == 0:
+                                    counts = getattr(model, "ptr_expert_counts", None)
+                                    router_map = getattr(model, "router_map", None)
+                                    if counts is not None and router_map is not None and counts.numel() == num_experts:
+                                        topk = torch.topk(counts, k=budget).indices.to(torch.long)
+                                        remap_table = torch.arange(num_experts, device=router_map.device)
+                                        if budget < num_experts:
+                                            topk_cpu = topk.detach().cpu().tolist()
+                                            for i in range(num_experts):
+                                                if i not in topk_cpu:
+                                                    remap_table[i] = topk[i % budget]
+                                        mapped = remap_table[router_map.to(remap_table.device)]
+                                        model.router_map.copy_(mapped)
+                                        model.usage_remap_count = int(getattr(model, "usage_remap_count", 0) + 1)
+                                        model.usage_remap_last = int(step)
                             model.usage_lambda = usage_lambda
                             model.usage_ratio = usage_ratio
             if INERTIA_SIGNAL_ENABLED:
                 confidence = 1.0 / (1.0 + loss_ema)
                 epi = confidence * confidence
                 model.ptr_inertia_epi = epi
-                    loss = loss + INERTIA_SIGNAL_REWARD * epi * (1.0 - model.ptr_inertia)
+                loss = loss + INERTIA_SIGNAL_REWARD * epi * (1.0 - model.ptr_inertia)
             scaler.scale(loss).backward()
             if hasattr(model, "ptr_inertia_dyn_tensor"):
                 model.ptr_inertia_dyn_tensor = None
@@ -2917,18 +2940,22 @@ def train_wallclock(model, loader, dataset_name, model_name, num_classes, wall_c
                         trace["state_loop_abab_rate"] = getattr(model, "state_loop_abab_rate", None)
                         trace["state_loop_mean_dwell"] = getattr(model, "state_loop_mean_dwell", None)
                         trace["state_loop_max_dwell"] = getattr(model, "state_loop_max_dwell", None)
-            if METABOLIC_TELEMETRY:
-                trace["metabolic_hunger"] = metabolic_stats.get("hgr")
-                trace["metabolic_prune_max_sim"] = metabolic_stats.get("prn")
-                trace["metabolic_prune_pairs"] = metabolic_stats.get("prc")
-                trace["metabolic_prune_pair"] = metabolic_stats.get("prx")
-                trace["metabolic_idle_experts"] = metabolic_stats.get("idl")
-                trace["metabolic_idle_steps"] = METABOLIC_IDLE_STEPS
-            if EXPERT_BUDGET > 0:
-                trace["usage_budget"] = EXPERT_BUDGET
-                trace["usage_ratio"] = getattr(model, "usage_ratio", None)
-                trace["usage_lambda"] = getattr(model, "usage_lambda", None)
-                trace["usage_ema"] = getattr(model, "usage_ema", None)
+                    if METABOLIC_TELEMETRY:
+                        trace["metabolic_hunger"] = metabolic_stats.get("hgr")
+                        trace["metabolic_prune_max_sim"] = metabolic_stats.get("prn")
+                        trace["metabolic_prune_pairs"] = metabolic_stats.get("prc")
+                        trace["metabolic_prune_pair"] = metabolic_stats.get("prx")
+                        trace["metabolic_idle_experts"] = metabolic_stats.get("idl")
+                        trace["metabolic_idle_steps"] = METABOLIC_IDLE_STEPS
+                    if EXPERT_BUDGET > 0:
+                        trace["usage_budget"] = EXPERT_BUDGET
+                        trace["usage_ratio"] = getattr(model, "usage_ratio", None)
+                        trace["usage_lambda"] = getattr(model, "usage_lambda", None)
+                        trace["usage_ema"] = getattr(model, "usage_ema", None)
+                        trace["usage_conf"] = getattr(model, "usage_conf", None)
+                        trace["usage_gate_ok"] = getattr(model, "usage_gate_ok", None)
+                        trace["usage_remap_count"] = getattr(model, "usage_remap_count", None)
+                        trace["usage_remap_last"] = getattr(model, "usage_remap_last", None)
                     if HIBERNATE_ENABLED:
                         trace["hibernation_saved"] = getattr(head, "hibernation_saved", 0) if head is not None else 0
                         trace["hibernation_fetched"] = getattr(head, "hibernation_fetched", 0) if head is not None else 0
@@ -2951,7 +2978,7 @@ def train_wallclock(model, loader, dataset_name, model_name, num_classes, wall_c
                         trace["pointer_total"] = int(total)
                     try:
                         with open(LIVE_TRACE_PATH, "a", encoding="utf-8") as f:
-                            f.write(json.dumps(trace) + "\\n")
+                            f.write(json.dumps(trace) + "\n")
                     except Exception as e:
                         log(f"live_trace write failed: {e}")
                     last_live_trace = now
@@ -3432,12 +3459,30 @@ def train_steps(model, loader, steps, dataset_name, model_name):
                         if USAGE_GATE_EVAL:
                             eval_acc_val = getattr(model, "last_eval_acc", None)
                             gate_ok = eval_acc_val is not None and float(eval_acc_val) >= USAGE_GATE_CONF
+                            model.usage_conf = float(eval_acc_val) if eval_acc_val is not None else None
                         else:
                             confidence = 1.0 / (1.0 + loss_ema)
                             gate_ok = confidence >= USAGE_GATE_CONF
+                            model.usage_conf = confidence
+                        model.usage_gate_ok = bool(gate_ok)
                         if gate_ok:
                             usage_lambda = min(USAGE_LAMBDA_MAX, usage_lambda + (USAGE_LAMBDA_ETA * usage_ema))
                             loss = loss + (loss.new_tensor(usage_ratio) * usage_lambda)
+                            if USAGE_REMAP_ENABLED and usage_ratio > 0 and step % max(1, USAGE_REMAP_EVERY) == 0:
+                                counts = getattr(model, "ptr_expert_counts", None)
+                                router_map = getattr(model, "router_map", None)
+                                if counts is not None and router_map is not None and counts.numel() == num_experts:
+                                    topk = torch.topk(counts, k=budget).indices.to(torch.long)
+                                    remap_table = torch.arange(num_experts, device=router_map.device)
+                                    if budget < num_experts:
+                                        topk_cpu = topk.detach().cpu().tolist()
+                                        for i in range(num_experts):
+                                            if i not in topk_cpu:
+                                                remap_table[i] = topk[i % budget]
+                                    mapped = remap_table[router_map.to(remap_table.device)]
+                                    model.router_map.copy_(mapped)
+                                    model.usage_remap_count = int(getattr(model, "usage_remap_count", 0) + 1)
+                                    model.usage_remap_last = int(step)
                         model.usage_lambda = usage_lambda
                         model.usage_ratio = usage_ratio
             if INERTIA_SIGNAL_ENABLED:
