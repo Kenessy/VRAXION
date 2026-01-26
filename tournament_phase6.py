@@ -296,6 +296,8 @@ class VCogGovernor:
         orb = telemetry.get("orb")
         rd = telemetry.get("rd")
         ac = telemetry.get("ac")
+        vh = telemetry.get("vh")
+        vu = telemetry.get("vu")
         try:
             orb = int(orb) if orb is not None else 0
         except Exception:
@@ -308,9 +310,17 @@ class VCogGovernor:
             ac = int(ac) if ac is not None else 0
         except Exception:
             ac = 0
+        try:
+            vh = float(vh) if vh is not None else 0.0
+        except Exception:
+            vh = 0.0
+        try:
+            vu = int(vu) if vu is not None else 0
+        except Exception:
+            vu = 0
 
         header = (
-            f"V_COG[PRGRS:{prg:.1f}% ORB:{orb} RD:{rd:.2e} AC:{ac} EPI:{epi:.2f} "
+            f"V_COG[PRGRS:{prg:.1f}% ORB:{orb} RD:{rd:.2e} AC:{ac} VH:{vh:.2f} VU:{vu} EPI:{epi:.2f} "
             f"LOCKS:{lk:.2f} FLOWS:{fl:.2f} "
             f"SNAPS:{sn:.2f} IDENT:{ident:.3f}]"
         )
@@ -1163,6 +1173,17 @@ class AbsoluteHallway(nn.Module):
             self.sensory_proj_in = None
             self.sensory_gru = None
             self.sensory_bridge = None
+        self.vault_enabled = os.environ.get("TP6_VAULT", "0") == "1"
+        self.vault_len = max(1, int(os.environ.get("TP6_VAULT_LEN", "32")))
+        self.vault_dim = max(8, int(os.environ.get("TP6_VAULT_DIM", "128")))
+        self.vault_decay = float(os.environ.get("TP6_VAULT_DECAY", "0.3"))
+        self.vault_inject_scale = float(os.environ.get("TP6_VAULT_INJECT_SCALE", "0.2"))
+        if self.vault_enabled:
+            self.vault_down = nn.Linear(slot_dim, self.vault_dim)
+            self.vault_up = nn.Linear(self.vault_dim, slot_dim)
+        else:
+            self.vault_down = None
+            self.vault_up = None
         self.input_proj = nn.Linear(input_dim, slot_dim)
         self.gru = nn.GRUCell(slot_dim, slot_dim)
         self.jump_score = nn.Linear(slot_dim, 1)
@@ -1211,6 +1232,11 @@ class AbsoluteHallway(nn.Module):
             nn.init.zeros_(self.sensory_gru.bias_hh)
             nn.init.xavier_uniform_(self.sensory_bridge.weight)
             nn.init.zeros_(self.sensory_bridge.bias)
+        if self.vault_enabled:
+            nn.init.xavier_uniform_(self.vault_down.weight)
+            nn.init.zeros_(self.vault_down.bias)
+            nn.init.xavier_uniform_(self.vault_up.weight)
+            nn.init.zeros_(self.vault_up.bias)
         # Adjust GRU power smoothly by ring length to avoid runaway accumulation on long tasks.
         # std interpolates 0.1 -> 0.05 as ring_len goes 0 -> 200 (clamped), bias 0.5 -> 0.2.
         f = max(0.0, min(1.0, self.ring_len / 200.0))
@@ -1356,10 +1382,12 @@ class AbsoluteHallway(nn.Module):
         device = x.device
         bos_decay = max(0.0, min(1.0, BOS_DECAY))
         bos_mask = None
+        eos_mask = None
         decay_on = None
         decay_off = None
         if bos_decay < 1.0 and x.shape[2] == 1:
             bos_mask = x[:, :, 0] == float(BOS_ID)
+            eos_mask = x[:, :, 0] == float(EOS_ID)
             decay_on = torch.tensor(bos_decay, device=device, dtype=x.dtype)
             decay_off = torch.tensor(1.0, device=device, dtype=x.dtype)
         ring_range = self.ring_range
@@ -1428,6 +1456,14 @@ class AbsoluteHallway(nn.Module):
 
         movement_cost = 0.0
         raw_movement_cost = 0.0
+        vault_active = self.vault_enabled and bos_mask is not None and eos_mask is not None
+        vault_ring = None
+        vault_ptr = None
+        vault_injections = 0
+        vault_updates = 0
+        if vault_active:
+            vault_ring = torch.zeros(B, self.vault_len, self.vault_dim, device=device, dtype=x.dtype)
+            vault_ptr = torch.zeros(B, device=device, dtype=torch.long)
         # Dynamic pointer trace (loops/motion)
         prev_ptr_int = None
         prev_prev_ptr_int = None
@@ -1495,6 +1531,8 @@ class AbsoluteHallway(nn.Module):
                     decay = torch.where(mask_t, decay_on, decay_off).view(B, 1, 1)
                     state = state * decay
                     h = h * decay.view(B, 1)
+                    if vault_active:
+                        vault_ring = vault_ring * decay
             anchor_clicks = 0
             # Per-step magnitude accumulator for adaptive decay.
             h_abs_sum_step = 0.0
@@ -1522,6 +1560,14 @@ class AbsoluteHallway(nn.Module):
                 inp = self.sensory_bridge(sensory_seq[:, t, :])
             else:
                 inp = self.input_proj(x[:, t, :])  # [B, slot_dim]
+            if vault_active and bos_mask is not None:
+                mask_t = bos_mask[:, t]
+                if mask_t.any():
+                    idx = torch.arange(B, device=device)
+                    read_idx = (vault_ptr - 1) % self.vault_len
+                    read_vec = vault_ring[idx, read_idx]
+                    inp = inp + self.vault_up(read_vec) * self.vault_inject_scale
+                    vault_injections += int(mask_t.sum().item())
             inp = self._apply_activation(inp)
             nan_guard("inp", inp, t)
             # Gaussian soft neighborhood over offsets [-K..K]
@@ -1561,6 +1607,14 @@ class AbsoluteHallway(nn.Module):
             upd = torch.where(active_mask.unsqueeze(1), h_new, prev_h)
             h = upd
             nan_guard("upd", upd, t)
+            if vault_active and eos_mask is not None:
+                mask_t = eos_mask[:, t]
+                if mask_t.any():
+                    idx = torch.arange(B, device=device)
+                    write_vec = self.vault_down(upd)
+                    vault_ring[idx[mask_t], vault_ptr[mask_t]] = write_vec[mask_t]
+                    vault_ptr = (vault_ptr + mask_t.to(torch.long)) % self.vault_len
+                    vault_updates += int(mask_t.sum().item())
             if collect_xray:
                 h_abs_sum += float(upd.abs().sum().item())
                 h_abs_count += upd.numel()
@@ -1974,6 +2028,12 @@ class AbsoluteHallway(nn.Module):
             else:
                 self.state_loop_entropy = None
         steps_used = max(1, t + 1)
+        if vault_active:
+            self.vault_inj_rate = float(vault_injections / max(1, T))
+            self.vault_updates = int(vault_updates)
+        else:
+            self.vault_inj_rate = 0.0
+            self.vault_updates = 0
         move_penalty = movement_cost / steps_used
         self.ptr_delta_abs_mean = float(move_penalty)
         raw_move_penalty = raw_movement_cost / steps_used
@@ -3362,6 +3422,8 @@ def train_wallclock(model, loader, dataset_name, model_name, num_classes, wall_c
                     "orb": float(getattr(model, "ptr_orbit", 0) or 0),
                     "rd": float(getattr(model, "ptr_residual_mean", 0.0) or 0.0),
                     "ac": int(getattr(model, "ptr_anchor_clicks", 0) or 0),
+                    "vh": float(getattr(model, "vault_inj_rate", 0.0) or 0.0),
+                    "vu": int(getattr(model, "vault_updates", 0) or 0),
                     "inertia": float(model.ptr_inertia),
                     "epi": float(getattr(model, "ptr_inertia_epi", 0.0) or 0.0),
                     "walk": float(model.ptr_walk_prob),
@@ -4221,6 +4283,8 @@ def train_steps(model, loader, steps, dataset_name, model_name):
                     "orb": float(getattr(model, "ptr_orbit", 0) or 0),
                     "rd": float(getattr(model, "ptr_residual_mean", 0.0) or 0.0),
                     "ac": int(getattr(model, "ptr_anchor_clicks", 0) or 0),
+                    "vh": float(getattr(model, "vault_inj_rate", 0.0) or 0.0),
+                    "vu": int(getattr(model, "vault_updates", 0) or 0),
                     "inertia": float(model.ptr_inertia),
                     "epi": float(getattr(model, "ptr_inertia_epi", 0.0) or 0.0),
                     "walk": float(model.ptr_walk_prob),
