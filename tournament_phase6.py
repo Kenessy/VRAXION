@@ -177,6 +177,13 @@ METABOLIC_TELEMETRY = os.environ.get("TP6_METABOLIC_TELEMETRY", "0") == "1"
 METABOLIC_HUNGER = os.environ.get("TP6_METABOLIC_HUNGER", "0") == "1"
 METABOLIC_COST_COEFF = float(os.environ.get("TP6_METABOLIC_COST_COEFF", "0.0001"))
 DOMAIN_SEP_COEFF = float(os.environ.get("TP6_DOMAIN_SEP_COEFF", "0.0"))
+EXPERT_BUDGET = int(os.environ.get("TP6_EXPERT_BUDGET", "0"))
+USAGE_LAMBDA_INIT = float(os.environ.get("TP6_USAGE_LAMBDA", "0.0"))
+USAGE_LAMBDA_MAX = float(os.environ.get("TP6_USAGE_LAMBDA_MAX", "0.5"))
+USAGE_LAMBDA_ETA = float(os.environ.get("TP6_USAGE_LAMBDA_ETA", "0.05"))
+USAGE_GATE_CONF = float(os.environ.get("TP6_USAGE_GATE_CONF", "0.95"))
+USAGE_GATE_EVAL = os.environ.get("TP6_USAGE_GATE_EVAL", "0") == "1"
+USAGE_EMA_BETA = float(os.environ.get("TP6_USAGE_EMA_BETA", "0.9"))
 METABOLIC_SIM_THRESH = float(os.environ.get("TP6_METABOLIC_SIM_THRESH", "0.98"))
 METABOLIC_EVERY = int(os.environ.get("TP6_METABOLIC_EVERY", "500"))
 METABOLIC_IDLE_STEPS = int(os.environ.get("TP6_METABOLIC_IDLE_STEPS", "2000"))
@@ -2539,10 +2546,38 @@ def train_wallclock(model, loader, dataset_name, model_name, num_classes, wall_c
                 else:
                     loss_ema = LOSS_EMA_BETA * loss_ema + (1.0 - LOSS_EMA_BETA) * loss_val
                 model.loss_ema = loss_ema
-                if INERTIA_SIGNAL_ENABLED:
-                    confidence = 1.0 / (1.0 + loss_ema)
-                    epi = confidence * confidence
-                    model.ptr_inertia_epi = epi
+                if EXPERT_BUDGET > 0 and EXPERT_HEADS > 1:
+                    active_experts = getattr(model, "ptr_expert_active", None)
+                    if active_experts is None:
+                        active_experts = shard_info.get("active_experts") if shard_info else None
+                    if active_experts is not None:
+                        head = getattr(model, "head", None)
+                        num_experts = getattr(head, "num_experts", EXPERT_HEADS) if head is not None else EXPERT_HEADS
+                        budget = min(EXPERT_BUDGET, num_experts)
+                        if budget > 0:
+                            usage_ratio = max(0.0, (float(active_experts) - float(budget)) / float(budget))
+                            usage_ema = getattr(model, "usage_ema", None)
+                            if usage_ema is None:
+                                usage_ema = usage_ratio
+                            else:
+                                usage_ema = USAGE_EMA_BETA * usage_ema + (1.0 - USAGE_EMA_BETA) * usage_ratio
+                            model.usage_ema = usage_ema
+                            usage_lambda = float(getattr(model, "usage_lambda", USAGE_LAMBDA_INIT))
+                            if USAGE_GATE_EVAL:
+                                eval_acc_val = getattr(model, "last_eval_acc", None)
+                                gate_ok = eval_acc_val is not None and float(eval_acc_val) >= USAGE_GATE_CONF
+                            else:
+                                confidence = 1.0 / (1.0 + loss_ema)
+                                gate_ok = confidence >= USAGE_GATE_CONF
+                            if gate_ok:
+                                usage_lambda = min(USAGE_LAMBDA_MAX, usage_lambda + (USAGE_LAMBDA_ETA * usage_ema))
+                                loss = loss + (loss.new_tensor(usage_ratio) * usage_lambda)
+                            model.usage_lambda = usage_lambda
+                            model.usage_ratio = usage_ratio
+            if INERTIA_SIGNAL_ENABLED:
+                confidence = 1.0 / (1.0 + loss_ema)
+                epi = confidence * confidence
+                model.ptr_inertia_epi = epi
                     loss = loss + INERTIA_SIGNAL_REWARD * epi * (1.0 - model.ptr_inertia)
             scaler.scale(loss).backward()
             if hasattr(model, "ptr_inertia_dyn_tensor"):
@@ -2882,13 +2917,18 @@ def train_wallclock(model, loader, dataset_name, model_name, num_classes, wall_c
                         trace["state_loop_abab_rate"] = getattr(model, "state_loop_abab_rate", None)
                         trace["state_loop_mean_dwell"] = getattr(model, "state_loop_mean_dwell", None)
                         trace["state_loop_max_dwell"] = getattr(model, "state_loop_max_dwell", None)
-                    if METABOLIC_TELEMETRY:
-                        trace["metabolic_hunger"] = metabolic_stats.get("hgr")
-                        trace["metabolic_prune_max_sim"] = metabolic_stats.get("prn")
-                        trace["metabolic_prune_pairs"] = metabolic_stats.get("prc")
-                        trace["metabolic_prune_pair"] = metabolic_stats.get("prx")
-                        trace["metabolic_idle_experts"] = metabolic_stats.get("idl")
-                        trace["metabolic_idle_steps"] = METABOLIC_IDLE_STEPS
+            if METABOLIC_TELEMETRY:
+                trace["metabolic_hunger"] = metabolic_stats.get("hgr")
+                trace["metabolic_prune_max_sim"] = metabolic_stats.get("prn")
+                trace["metabolic_prune_pairs"] = metabolic_stats.get("prc")
+                trace["metabolic_prune_pair"] = metabolic_stats.get("prx")
+                trace["metabolic_idle_experts"] = metabolic_stats.get("idl")
+                trace["metabolic_idle_steps"] = METABOLIC_IDLE_STEPS
+            if EXPERT_BUDGET > 0:
+                trace["usage_budget"] = EXPERT_BUDGET
+                trace["usage_ratio"] = getattr(model, "usage_ratio", None)
+                trace["usage_lambda"] = getattr(model, "usage_lambda", None)
+                trace["usage_ema"] = getattr(model, "usage_ema", None)
                     if HIBERNATE_ENABLED:
                         trace["hibernation_saved"] = getattr(head, "hibernation_saved", 0) if head is not None else 0
                         trace["hibernation_fetched"] = getattr(head, "hibernation_fetched", 0) if head is not None else 0
@@ -3374,6 +3414,32 @@ def train_steps(model, loader, steps, dataset_name, model_name):
             else:
                 loss_ema = LOSS_EMA_BETA * loss_ema + (1.0 - LOSS_EMA_BETA) * loss_val
             model.loss_ema = loss_ema
+            if EXPERT_BUDGET > 0 and EXPERT_HEADS > 1:
+                active_experts = getattr(model, "ptr_expert_active", None)
+                if active_experts is not None:
+                    head = getattr(model, "head", None)
+                    num_experts = getattr(head, "num_experts", EXPERT_HEADS) if head is not None else EXPERT_HEADS
+                    budget = min(EXPERT_BUDGET, num_experts)
+                    if budget > 0:
+                        usage_ratio = max(0.0, (float(active_experts) - float(budget)) / float(budget))
+                        usage_ema = getattr(model, "usage_ema", None)
+                        if usage_ema is None:
+                            usage_ema = usage_ratio
+                        else:
+                            usage_ema = USAGE_EMA_BETA * usage_ema + (1.0 - USAGE_EMA_BETA) * usage_ratio
+                        model.usage_ema = usage_ema
+                        usage_lambda = float(getattr(model, "usage_lambda", USAGE_LAMBDA_INIT))
+                        if USAGE_GATE_EVAL:
+                            eval_acc_val = getattr(model, "last_eval_acc", None)
+                            gate_ok = eval_acc_val is not None and float(eval_acc_val) >= USAGE_GATE_CONF
+                        else:
+                            confidence = 1.0 / (1.0 + loss_ema)
+                            gate_ok = confidence >= USAGE_GATE_CONF
+                        if gate_ok:
+                            usage_lambda = min(USAGE_LAMBDA_MAX, usage_lambda + (USAGE_LAMBDA_ETA * usage_ema))
+                            loss = loss + (loss.new_tensor(usage_ratio) * usage_lambda)
+                        model.usage_lambda = usage_lambda
+                        model.usage_ratio = usage_ratio
             if INERTIA_SIGNAL_ENABLED:
                 confidence = 1.0 / (1.0 + loss_ema)
                 epi = confidence * confidence
