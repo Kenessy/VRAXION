@@ -16,7 +16,7 @@ def main() -> int:
     if repo_root not in sys.path:
         sys.path.insert(0, repo_root)
     parser = argparse.ArgumentParser(description="Run eval-only pass for VRAXION checkpoints.")
-    parser.add_argument("--checkpoint", required=True, help="Path to checkpoint .pt file")
+    parser.add_argument("--checkpoint", required=True, help="Path to checkpoint .pt file or modular directory")
     parser.add_argument("--dataset", default="synth", help="Dataset label for logging")
     parser.add_argument("--model-name", default="absolute_hallway", help="Model name for logging")
     args = parser.parse_args()
@@ -27,6 +27,13 @@ def main() -> int:
         return 2
 
     import tournament_phase6 as tp6
+
+    modular_dir = tp6._resolve_modular_resume_dir(ckpt_path)
+    if modular_dir:
+        router_state = torch.load(os.path.join(modular_dir, "system", "router.state"), map_location="cpu")
+        num_experts = router_state.get("num_experts")
+        if num_experts:
+            tp6.EXPERT_HEADS = int(num_experts)
 
     tp6.set_seed(tp6.SEED)
     loader, num_classes, collate = tp6.get_seq_mnist_loader()
@@ -41,12 +48,15 @@ def main() -> int:
         ring_len=tp6.RING_LEN,
         slot_dim=tp6.SLOT_DIM,
     )
-    ckpt = torch.load(ckpt_path, map_location=tp6.DEVICE)
-    state = ckpt.get("model", ckpt)
-    missing, unexpected = model.load_state_dict(state, strict=False)
-    if missing or unexpected:
-        print(f"[eval_only] missing keys: {missing}")
-        print(f"[eval_only] unexpected keys: {unexpected}")
+    if modular_dir:
+        ckpt = tp6._load_modular_checkpoint(model, optimizer=None, scaler=None, base_dir=modular_dir)
+    else:
+        ckpt = torch.load(ckpt_path, map_location=tp6.DEVICE)
+        state = ckpt.get("model", ckpt)
+        missing, unexpected = model.load_state_dict(state, strict=False)
+        if missing or unexpected:
+            print(f"[eval_only] missing keys: {missing}")
+            print(f"[eval_only] unexpected keys: {unexpected}")
 
     if "update_scale" in ckpt:
         model.update_scale = float(ckpt["update_scale"])

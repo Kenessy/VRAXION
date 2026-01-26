@@ -195,6 +195,15 @@ HIBERNATE_MODE = os.environ.get("TP6_HIBERNATE_MODE", "shadow").strip().lower()
 HIBERNATE_IDLE_STEPS = int(os.environ.get("TP6_HIBERNATE_IDLE_STEPS", str(METABOLIC_IDLE_STEPS)))
 HIBERNATE_EVERY = int(os.environ.get("TP6_HIBERNATE_EVERY", "50"))
 HIBERNATE_DIR = os.environ.get("TP6_HIBERNATE_DIR", "hibernation")
+MODULAR_SAVE = os.environ.get("TP6_MODULAR_SAVE", "0") == "1"
+MODULAR_SAVE_MODE = os.environ.get("TP6_MODULAR_SAVE_MODE", "only").strip().lower()
+MODULAR_DIR = os.environ.get("TP6_MODULAR_DIR", "")
+MODULAR_RESUME = os.environ.get("TP6_MODULAR_RESUME", "0") == "1"
+MODULAR_AUTO_EXPERTS = os.environ.get("TP6_MODULAR_AUTO_EXPERTS", "0") == "1"
+TENURE_CONTRIB_THRESH = float(os.environ.get("TP6_TENURE_CONTRIB", "1000.0"))
+TENURE_PROBATION_STEPS = int(os.environ.get("TP6_TENURE_PROBATION_STEPS", "1000"))
+TENURE_TTL_STEPS = int(os.environ.get("TP6_TENURE_TTL_STEPS", "0"))
+TENURE_GC = os.environ.get("TP6_TENURE_GC", "0") == "1"
 PRECISION = CFG.precision
 DTYPE = CFG.dtype
 USE_AMP = CFG.use_amp
@@ -383,6 +392,217 @@ def _load_expert_snapshot(path):
         return None, None
     state = torch.load(path, map_location="cpu")
     return state, _hash_state_dict(state)
+
+
+def _resolve_modular_dir(base_dir, root_dir, fallback_path):
+    path = base_dir or ""
+    if not path:
+        path = fallback_path
+    if not path:
+        path = os.path.join(root_dir, "checkpoints", "modular")
+    if path.endswith(".pt"):
+        path = os.path.splitext(path)[0] + "_modular"
+    if not os.path.isabs(path):
+        path = os.path.join(root_dir, path)
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def _modular_paths(base_dir):
+    system_dir = os.path.join(base_dir, "system")
+    experts_dir = os.path.join(base_dir, "experts")
+    os.makedirs(system_dir, exist_ok=True)
+    os.makedirs(experts_dir, exist_ok=True)
+    router_path = os.path.join(system_dir, "router.state")
+    meta_path = os.path.join(experts_dir, "meta.json")
+    return router_path, experts_dir, meta_path
+
+
+def _split_model_state_dict(state_dict):
+    core = {}
+    experts = {}
+    prefix = "head.experts."
+    for key, value in state_dict.items():
+        if key.startswith(prefix):
+            rest = key[len(prefix):]
+            parts = rest.split(".", 1)
+            if len(parts) != 2:
+                core[key] = value
+                continue
+            try:
+                idx = int(parts[0])
+            except ValueError:
+                core[key] = value
+                continue
+            expert_state = experts.setdefault(idx, {})
+            expert_state[parts[1]] = value.detach().cpu()
+        else:
+            core[key] = value.detach().cpu()
+    return core, experts
+
+
+def _ensure_expert_tracking(model, num_experts, step):
+    contrib = getattr(model, "expert_contrib", None)
+    last_used = getattr(model, "expert_last_used", None)
+    created = getattr(model, "expert_created_step", None)
+    tenured = getattr(model, "expert_tenured", None)
+    if contrib is None or last_used is None or created is None or tenured is None:
+        model.expert_contrib = [0.0 for _ in range(num_experts)]
+        model.expert_last_used = [int(step) for _ in range(num_experts)]
+        model.expert_created_step = [int(step) for _ in range(num_experts)]
+        model.expert_tenured = [False for _ in range(num_experts)]
+        return
+    if len(contrib) < num_experts:
+        missing = num_experts - len(contrib)
+        model.expert_contrib.extend([0.0 for _ in range(missing)])
+        model.expert_last_used.extend([int(step) for _ in range(missing)])
+        model.expert_created_step.extend([int(step) for _ in range(missing)])
+        model.expert_tenured.extend([False for _ in range(missing)])
+
+
+def _update_expert_usage(model, num_experts, step):
+    counts = getattr(model, "ptr_expert_counts", None)
+    if counts is None or counts.numel() != num_experts:
+        return
+    _ensure_expert_tracking(model, num_experts, step)
+    counts_list = counts.detach().cpu().tolist()
+    for idx, count in enumerate(counts_list):
+        if count <= 0:
+            continue
+        model.expert_last_used[idx] = int(step)
+        model.expert_contrib[idx] += float(count)
+
+
+def _build_expert_meta(model, step, num_experts, contrib_thresh, probation_steps):
+    _ensure_expert_tracking(model, num_experts, step)
+    meta = []
+    for idx in range(num_experts):
+        contrib = float(model.expert_contrib[idx])
+        created = int(model.expert_created_step[idx])
+        last_used = int(model.expert_last_used[idx])
+        age = max(0, int(step) - created)
+        probation = age < probation_steps
+        tenured = contrib >= contrib_thresh
+        model.expert_tenured[idx] = bool(tenured)
+        meta.append(
+            {
+                "id": idx,
+                "contrib": contrib,
+                "created_step": created,
+                "last_used_step": last_used,
+                "age_steps": age,
+                "probation": bool(probation),
+                "tenured": bool(tenured),
+            }
+        )
+    return meta
+
+
+def _load_modular_meta(model, meta_path):
+    if not os.path.exists(meta_path):
+        return
+    try:
+        with open(meta_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        return
+    experts = data.get("experts", [])
+    if not experts:
+        return
+    num_experts = len(experts)
+    model.expert_contrib = [float(item.get("contrib", 0.0)) for item in experts]
+    model.expert_last_used = [int(item.get("last_used_step", 0)) for item in experts]
+    model.expert_created_step = [int(item.get("created_step", 0)) for item in experts]
+    model.expert_tenured = [bool(item.get("tenured", False)) for item in experts]
+
+
+def _save_modular_checkpoint(model, optimizer, scaler, step, losses, base_dir, contrib_thresh, probation_steps,
+                             ttl_steps=0, gc_enabled=False):
+    router_path, experts_dir, meta_path = _modular_paths(base_dir)
+    state_dict = model.state_dict()
+    core_state, expert_states = _split_model_state_dict(state_dict)
+    payload = {
+        "model": core_state,
+        "optim": optimizer.state_dict(),
+        "scaler": scaler.state_dict() if USE_AMP else None,
+        "step": int(step),
+        "losses": list(losses),
+        "update_scale": getattr(model, "update_scale", UPDATE_SCALE),
+        "ptr_inertia": getattr(model, "ptr_inertia", PTR_INERTIA),
+        "ptr_inertia_ema": getattr(model, "ptr_inertia_ema", getattr(model, "ptr_inertia", PTR_INERTIA)),
+        "ptr_inertia_floor": getattr(model, "ptr_inertia_floor", 0.0),
+        "agc_scale_max": getattr(model, "agc_scale_max", AGC_SCALE_MAX),
+        "ground_speed_ema": getattr(model, "ground_speed_ema", None),
+        "ground_speed_limit": getattr(model, "ground_speed_limit", None),
+        "num_experts": getattr(getattr(model, "head", None), "num_experts", EXPERT_HEADS),
+        "param_names": [name for name, _ in model.named_parameters()],
+    }
+    torch.save(payload, router_path)
+    num_experts = int(payload["num_experts"])
+    expert_meta = _build_expert_meta(model, step, num_experts, contrib_thresh, probation_steps)
+    deleted = []
+    for idx, state in expert_states.items():
+        if idx >= num_experts:
+            continue
+        if gc_enabled and ttl_steps > 0:
+            tenured = model.expert_tenured[idx]
+            idle = step - model.expert_last_used[idx]
+            age = step - model.expert_created_step[idx]
+            probation = age < probation_steps
+            if not tenured and not probation and idle >= ttl_steps:
+                deleted.append(idx)
+                continue
+        path = os.path.join(experts_dir, f"expert_{idx:03d}.pt")
+        torch.save(state, path)
+    meta = {
+        "num_experts": num_experts,
+        "step": int(step),
+        "experts": expert_meta,
+        "deleted": deleted,
+    }
+    with open(meta_path, "w", encoding="utf-8") as f:
+        json.dump(meta, f, indent=2)
+
+
+def _load_modular_checkpoint(model, optimizer, scaler, base_dir):
+    router_path, experts_dir, meta_path = _modular_paths(base_dir)
+    ckpt = torch.load(router_path, map_location=DEVICE)
+    try:
+        model.load_state_dict(ckpt["model"])
+    except RuntimeError as exc:
+        log(f"Modular load strict failed: {exc}; retrying strict=False")
+        missing, unexpected = model.load_state_dict(ckpt["model"], strict=False)
+        if missing:
+            log(f"Modular load missing keys: {missing}")
+        if unexpected:
+            log(f"Modular load unexpected keys: {unexpected}")
+    head = getattr(model, "head", None)
+    if head is not None and getattr(head, "experts", None):
+        for idx, expert in enumerate(head.experts):
+            path = os.path.join(experts_dir, f"expert_{idx:03d}.pt")
+            if not os.path.exists(path):
+                continue
+            state = torch.load(path, map_location="cpu")
+            expert.load_state_dict(state, strict=False)
+    if "optim" in ckpt and optimizer is not None:
+        optimizer.load_state_dict(ckpt["optim"])
+    if ckpt.get("scaler") and USE_AMP and scaler is not None:
+        scaler.load_state_dict(ckpt["scaler"])
+    _load_modular_meta(model, meta_path)
+    return ckpt
+
+
+def _resolve_modular_resume_dir(resume_path):
+    if resume_path and os.path.isdir(resume_path):
+        router_path = os.path.join(resume_path, "system", "router.state")
+        if os.path.exists(router_path):
+            return resume_path
+    if resume_path and resume_path.endswith(".pt"):
+        candidate = os.path.splitext(resume_path)[0] + "_modular"
+        router_path = os.path.join(candidate, "system", "router.state")
+        if os.path.exists(router_path):
+            return candidate
+    return None
 MI_SHUFFLE = CFG.mi_shuffle
 STATE_LOOP_METRICS = CFG.state_loop_metrics
 STATE_LOOP_EVERY = CFG.state_loop_every
@@ -515,6 +735,27 @@ def set_seed(seed: int) -> None:
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
+
+
+def _maybe_override_expert_heads(resume_path: str) -> None:
+    if not resume_path:
+        return
+    modular_dir = _resolve_modular_resume_dir(resume_path)
+    if not modular_dir or not MODULAR_AUTO_EXPERTS:
+        return
+    router_path = os.path.join(modular_dir, "system", "router.state")
+    if not os.path.exists(router_path):
+        return
+    try:
+        ckpt = torch.load(router_path, map_location="cpu")
+    except Exception as exc:
+        log(f"Modular auto-expert read failed: {exc}")
+        return
+    num_experts = ckpt.get("num_experts")
+    if num_experts:
+        global EXPERT_HEADS
+        EXPERT_HEADS = int(num_experts)
+        log(f"[modular] auto override EXPERT_HEADS={EXPERT_HEADS} from {router_path}")
 
 
 def log(msg: str) -> None:
@@ -2297,69 +2538,76 @@ def train_wallclock(model, loader, dataset_name, model_name, num_classes, wall_c
     last_heartbeat = start
     last_live_trace = start
     step = 0
-    if RESUME and os.path.exists(CHECKPOINT_PATH):
+    if RESUME:
         resume_path = os.path.abspath(CHECKPOINT_PATH)
-        log(f"Resume requested, attempting load: {resume_path}")
-        ckpt = torch.load(resume_path, map_location=DEVICE)
-        try:
-            model.load_state_dict(ckpt["model"])
-        except RuntimeError as exc:
-            exc_text = str(exc)
-            allow_relaxed = MOBIUS_ENABLED or "router_map" in exc_text
-            if allow_relaxed:
-                log("Retrying load_state_dict(strict=False) due to key mismatch")
-                missing, unexpected = model.load_state_dict(ckpt["model"], strict=False)
-                if missing:
-                    log(f"Load missing keys: {missing}")
-                if unexpected:
-                    log(f"Load unexpected keys: {unexpected}")
+        modular_dir = _resolve_modular_resume_dir(resume_path) if (MODULAR_RESUME or os.path.isdir(resume_path)) else None
+        ckpt = None
+        if modular_dir:
+            log(f"Resume requested, attempting modular load: {modular_dir}")
+            ckpt = _load_modular_checkpoint(model, optimizer, scaler, modular_dir)
+        elif os.path.exists(resume_path):
+            log(f"Resume requested, attempting load: {resume_path}")
+            ckpt = torch.load(resume_path, map_location=DEVICE)
+            try:
+                model.load_state_dict(ckpt["model"])
+            except RuntimeError as exc:
+                exc_text = str(exc)
+                allow_relaxed = MOBIUS_ENABLED or "router_map" in exc_text
+                if allow_relaxed:
+                    log("Retrying load_state_dict(strict=False) due to key mismatch")
+                    missing, unexpected = model.load_state_dict(ckpt["model"], strict=False)
+                    if missing:
+                        log(f"Load missing keys: {missing}")
+                    if unexpected:
+                        log(f"Load unexpected keys: {unexpected}")
+                else:
+                    raise
+            ckpt_experts = ckpt.get("num_experts")
+            experts_mismatch = ckpt_experts is not None and int(ckpt_experts) != EXPERT_HEADS
+            if MOBIUS_ENABLED or experts_mismatch:
+                if experts_mismatch:
+                    log(f"Expert count mismatch (ckpt={ckpt_experts}, env={EXPERT_HEADS}); skipping optimizer load")
+                else:
+                    log("MOBIUS enabled: skipping optimizer/scaler load for clean restart")
             else:
-                raise
-        ckpt_experts = ckpt.get("num_experts")
-        experts_mismatch = ckpt_experts is not None and int(ckpt_experts) != EXPERT_HEADS
-        if MOBIUS_ENABLED or experts_mismatch:
-            if experts_mismatch:
-                log(f"Expert count mismatch (ckpt={ckpt_experts}, env={EXPERT_HEADS}); skipping optimizer load")
-            else:
-                log("MOBIUS enabled: skipping optimizer/scaler load for clean restart")
-        else:
-            optimizer.load_state_dict(ckpt["optim"])
-            if ckpt.get("scaler") and USE_AMP:
-                scaler.load_state_dict(ckpt["scaler"])
-        step = int(ckpt.get("step", 0))
-        losses = list(ckpt.get("losses", []))
-        if "update_scale" in ckpt:
-            model.update_scale = float(ckpt["update_scale"])
-        if "ptr_inertia" in ckpt:
-            model.ptr_inertia = float(ckpt["ptr_inertia"])
-        if "ptr_inertia_ema" in ckpt:
-            model.ptr_inertia_ema = float(ckpt["ptr_inertia_ema"])
-        if "ptr_inertia_floor" in ckpt:
-            model.ptr_inertia_floor = float(ckpt["ptr_inertia_floor"])
-        if "agc_scale_max" in ckpt:
-            model.agc_scale_max = float(ckpt["agc_scale_max"])
-        if "ground_speed_ema" in ckpt:
-            model.ground_speed_ema = ckpt["ground_speed_ema"]
-        if "ground_speed_limit" in ckpt:
-            model.ground_speed_limit = ckpt["ground_speed_limit"]
-        # Honor env overrides after resume (no hidden reset).
-        env_scale_init = os.environ.get("TP6_SCALE_INIT")
-        env_scale_max = os.environ.get("TP6_SCALE_MAX")
-        if env_scale_init is not None:
-            model.update_scale = float(env_scale_init)
-        if env_scale_max is not None:
-            model.agc_scale_max = float(env_scale_max)
-        env_inertia = os.environ.get("TP6_PTR_INERTIA_OVERRIDE")
-        if env_inertia is not None:
-            model.ptr_inertia = float(env_inertia)
-            model.ptr_inertia_ema = model.ptr_inertia
-        model.agc_scale_cap = model.agc_scale_max
-        # Clear dynamic speed stats to avoid stale velocity.
-        model.ground_speed_ema = None
-        model.ground_speed_limit = None
-        model.ground_speed = None
-        model.debug_scale_out = model.update_scale
-        log(f"Resumed from checkpoint: {resume_path} (step={step}) | update_scale={model.update_scale}")
+                optimizer.load_state_dict(ckpt["optim"])
+                if ckpt.get("scaler") and USE_AMP:
+                    scaler.load_state_dict(ckpt["scaler"])
+        if ckpt is not None:
+            step = int(ckpt.get("step", 0))
+            losses = list(ckpt.get("losses", []))
+            if "update_scale" in ckpt:
+                model.update_scale = float(ckpt["update_scale"])
+            if "ptr_inertia" in ckpt:
+                model.ptr_inertia = float(ckpt["ptr_inertia"])
+            if "ptr_inertia_ema" in ckpt:
+                model.ptr_inertia_ema = float(ckpt["ptr_inertia_ema"])
+            if "ptr_inertia_floor" in ckpt:
+                model.ptr_inertia_floor = float(ckpt["ptr_inertia_floor"])
+            if "agc_scale_max" in ckpt:
+                model.agc_scale_max = float(ckpt["agc_scale_max"])
+            if "ground_speed_ema" in ckpt:
+                model.ground_speed_ema = ckpt["ground_speed_ema"]
+            if "ground_speed_limit" in ckpt:
+                model.ground_speed_limit = ckpt["ground_speed_limit"]
+            # Honor env overrides after resume (no hidden reset).
+            env_scale_init = os.environ.get("TP6_SCALE_INIT")
+            env_scale_max = os.environ.get("TP6_SCALE_MAX")
+            if env_scale_init is not None:
+                model.update_scale = float(env_scale_init)
+            if env_scale_max is not None:
+                model.agc_scale_max = float(env_scale_max)
+            env_inertia = os.environ.get("TP6_PTR_INERTIA_OVERRIDE")
+            if env_inertia is not None:
+                model.ptr_inertia = float(env_inertia)
+                model.ptr_inertia_ema = model.ptr_inertia
+            model.agc_scale_cap = model.agc_scale_max
+            # Clear dynamic speed stats to avoid stale velocity.
+            model.ground_speed_ema = None
+            model.ground_speed_limit = None
+            model.ground_speed = None
+            model.debug_scale_out = model.update_scale
+            log(f"Resumed from checkpoint: {resume_path} (step={step}) | update_scale={model.update_scale}")
     # cycle loader until wall clock
     # Disable early-stop flag; we rely on external stop or manual interrupt.
     stop_early = False
@@ -2551,6 +2799,10 @@ def train_wallclock(model, loader, dataset_name, model_name, num_classes, wall_c
                 else:
                     loss_ema = LOSS_EMA_BETA * loss_ema + (1.0 - LOSS_EMA_BETA) * loss_val
                 model.loss_ema = loss_ema
+                if EXPERT_HEADS > 1:
+                    head = getattr(model, "head", None)
+                    num_experts = getattr(head, "num_experts", EXPERT_HEADS) if head is not None else EXPERT_HEADS
+                    _update_expert_usage(model, num_experts, step)
                 if EXPERT_BUDGET > 0 and EXPERT_HEADS > 1:
                     active_experts = getattr(model, "ptr_expert_active", None)
                     if active_experts is None:
@@ -3149,17 +3401,34 @@ def train_wallclock(model, loader, dataset_name, model_name, num_classes, wall_c
                     "nonfinite": not is_finite,
                 }
                 step_path, bad_path, last_good_path = _checkpoint_paths(CHECKPOINT_PATH, step)
-                if SAVE_HISTORY:
+                save_monolithic = (not MODULAR_SAVE) or (MODULAR_SAVE_MODE == "dual")
+                if save_monolithic and SAVE_HISTORY:
                     torch.save(ckpt, step_path)
                     log(f"Checkpoint saved @ step {step} -> {step_path}")
                     if (not is_finite) and SAVE_BAD:
                         torch.save(ckpt, bad_path)
                         log(f"Non-finite checkpoint saved @ step {step} -> {bad_path}")
                 if is_finite:
-                    torch.save(ckpt, CHECKPOINT_PATH)
-                    if SAVE_LAST_GOOD:
-                        torch.save(ckpt, last_good_path)
-                    log(f"Checkpoint saved @ step {step} -> {CHECKPOINT_PATH}")
+                    if MODULAR_SAVE:
+                        modular_dir = _resolve_modular_dir(MODULAR_DIR, ROOT, CHECKPOINT_PATH)
+                        _save_modular_checkpoint(
+                            model,
+                            optimizer,
+                            scaler,
+                            step,
+                            losses,
+                            modular_dir,
+                            TENURE_CONTRIB_THRESH,
+                            TENURE_PROBATION_STEPS,
+                            ttl_steps=TENURE_TTL_STEPS,
+                            gc_enabled=TENURE_GC,
+                        )
+                        log(f"Modular checkpoint saved @ step {step} -> {modular_dir}")
+                    if save_monolithic:
+                        torch.save(ckpt, CHECKPOINT_PATH)
+                        if SAVE_LAST_GOOD:
+                            torch.save(ckpt, last_good_path)
+                        log(f"Checkpoint saved @ step {step} -> {CHECKPOINT_PATH}")
                 else:
                     log(f"Checkpoint not updated (non-finite metrics) @ step {step}")
         # No early break; continue looping until externally stopped.
@@ -3441,6 +3710,10 @@ def train_steps(model, loader, steps, dataset_name, model_name):
             else:
                 loss_ema = LOSS_EMA_BETA * loss_ema + (1.0 - LOSS_EMA_BETA) * loss_val
             model.loss_ema = loss_ema
+            if EXPERT_HEADS > 1:
+                head = getattr(model, "head", None)
+                num_experts = getattr(head, "num_experts", EXPERT_HEADS) if head is not None else EXPERT_HEADS
+                _update_expert_usage(model, num_experts, step)
             if EXPERT_BUDGET > 0 and EXPERT_HEADS > 1:
                 active_experts = getattr(model, "ptr_expert_active", None)
                 if active_experts is not None:
@@ -3804,17 +4077,34 @@ def train_steps(model, loader, steps, dataset_name, model_name):
                 log(f"Checkpoint saved @ step {step} -> {ckpt_path}")
                 continue
             step_path, bad_path, last_good_path = _checkpoint_paths(CHECKPOINT_PATH, step)
-            if SAVE_HISTORY:
+            save_monolithic = (not MODULAR_SAVE) or (MODULAR_SAVE_MODE == "dual")
+            if save_monolithic and SAVE_HISTORY:
                 torch.save(ckpt, step_path)
                 log(f"Checkpoint saved @ step {step} -> {step_path}")
                 if (not is_finite) and SAVE_BAD:
                     torch.save(ckpt, bad_path)
                     log(f"Non-finite checkpoint saved @ step {step} -> {bad_path}")
             if is_finite:
-                torch.save(ckpt, CHECKPOINT_PATH)
-                if SAVE_LAST_GOOD:
-                    torch.save(ckpt, last_good_path)
-                log(f"Checkpoint saved @ step {step} -> {CHECKPOINT_PATH}")
+                if MODULAR_SAVE:
+                    modular_dir = _resolve_modular_dir(MODULAR_DIR, ROOT, CHECKPOINT_PATH)
+                    _save_modular_checkpoint(
+                        model,
+                        optimizer,
+                        scaler,
+                        step,
+                        losses,
+                        modular_dir,
+                        TENURE_CONTRIB_THRESH,
+                        TENURE_PROBATION_STEPS,
+                        ttl_steps=TENURE_TTL_STEPS,
+                        gc_enabled=TENURE_GC,
+                    )
+                    log(f"Modular checkpoint saved @ step {step} -> {modular_dir}")
+                if save_monolithic:
+                    torch.save(ckpt, CHECKPOINT_PATH)
+                    if SAVE_LAST_GOOD:
+                        torch.save(ckpt, last_good_path)
+                    log(f"Checkpoint saved @ step {step} -> {CHECKPOINT_PATH}")
             else:
                 log(f"Checkpoint not updated (non-finite metrics) @ step {step}")
     slope = compute_slope(losses)
@@ -4002,6 +4292,8 @@ def main():
     if not RESUME:
         rotate_artifacts()
     set_seed(SEED)
+    if RESUME:
+        _maybe_override_expert_heads(os.path.abspath(CHECKPOINT_PATH))
     # Reduce kernel search overhead / variance.
     try:
         torch.backends.cudnn.benchmark = False
