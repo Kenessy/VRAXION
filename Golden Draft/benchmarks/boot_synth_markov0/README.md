@@ -27,9 +27,16 @@ python -u \"Golden Draft/benchmarks/boot_synth_markov0/run_boot_synth_markov0.py
 The script writes a self-contained run directory under:
 `bench_vault/benchmarks/boot_synth_markov0/<timestamp>/`
 
+To avoid overriding existing env vars inside the process:
+
+```powershell
+python -u \"Golden Draft/benchmarks/boot_synth_markov0/run_boot_synth_markov0.py\" --respect-env
+```
+
 ## Defaults (can be overridden)
 
-The script sets conservative defaults unless you already set them in your shell:
+The script sets conservative defaults (in-process only; it does NOT modify your
+shell permanently). You can override via CLI flags:
 - `VAR_COMPUTE_DEVICE=cpu`
 - `VRX_RING_LEN=256`, `VRX_SLOT_DIM=128`
 - `VRX_SYNTH=1`, `VRX_SYNTH_MODE=markov0`
@@ -37,4 +44,3 @@ The script sets conservative defaults unless you already set them in your shell:
 
 Pass signal (informal): `eval_acc` should rise well above chance (>0.90) on CPU
 within the configured step budget.
-

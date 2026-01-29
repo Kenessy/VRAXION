@@ -23,9 +23,10 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 
-def _set_default_env(name: str, value: str) -> None:
-    if os.environ.get(name) is None:
-        os.environ[name] = value
+def _set_env(name: str, value: str, *, respect_existing: bool) -> None:
+    if respect_existing and os.environ.get(name) is not None:
+        return
+    os.environ[name] = value
 
 
 def _try_git_rev(repo_root: Path) -> Optional[str]:
@@ -66,6 +67,11 @@ def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     p.add_argument("--device", type=str, default="cpu", choices=["cpu", "cuda"])
     p.add_argument("--lr", type=float, default=1e-3)
     p.add_argument("--tag", type=str, default="boot_synth_markov0")
+    p.add_argument(
+        "--respect-env",
+        action="store_true",
+        help="Do not override existing VRX_/VAR_ env vars inside this process.",
+    )
     return p.parse_args(argv)
 
 
@@ -77,26 +83,26 @@ def main(argv: Optional[list[str]] = None) -> int:
     run_root.mkdir(parents=True, exist_ok=True)
 
     # Route all runner artifacts into a unique, git-ignored directory.
-    _set_default_env("VAR_PROJECT_ROOT", str(run_root))
-    _set_default_env("VAR_LOGGING_PATH", str(run_root / "vraxion.log"))
-    _set_default_env("VAR_COMPUTE_DEVICE", str(args.device))
-    _set_default_env("VRX_PRECISION", "fp32")
+    _set_env("VAR_PROJECT_ROOT", str(run_root), respect_existing=bool(args.respect_env))
+    _set_env("VAR_LOGGING_PATH", str(run_root / "vraxion.log"), respect_existing=bool(args.respect_env))
+    _set_env("VAR_COMPUTE_DEVICE", str(args.device), respect_existing=bool(args.respect_env))
+    _set_env("VRX_PRECISION", "fp32", respect_existing=bool(args.respect_env))
 
     # Make the model small enough for fast CPU probes (unless already overridden).
-    _set_default_env("VRX_RING_LEN", str(int(args.ring_len)))
-    _set_default_env("VRX_SLOT_DIM", str(int(args.slot_dim)))
-    _set_default_env("VRX_PTR_STRIDE", "1")
+    _set_env("VRX_RING_LEN", str(int(args.ring_len)), respect_existing=bool(args.respect_env))
+    _set_env("VRX_SLOT_DIM", str(int(args.slot_dim)), respect_existing=bool(args.respect_env))
+    _set_env("VRX_PTR_STRIDE", "1", respect_existing=bool(args.respect_env))
 
     # Synthetic dataset: Markov0 (predict last token).
-    _set_default_env("VRX_SYNTH", "1")
-    _set_default_env("VRX_SYNTH_MODE", "markov0")
-    _set_default_env("VRX_SYNTH_LEN", str(int(args.seq_len)))
-    _set_default_env("VRX_SYNTH_SHUFFLE", "1")
+    _set_env("VRX_SYNTH", "1", respect_existing=bool(args.respect_env))
+    _set_env("VRX_SYNTH_MODE", "markov0", respect_existing=bool(args.respect_env))
+    _set_env("VRX_SYNTH_LEN", str(int(args.seq_len)), respect_existing=bool(args.respect_env))
+    _set_env("VRX_SYNTH_SHUFFLE", "1", respect_existing=bool(args.respect_env))
 
-    _set_default_env("VRX_BATCH_SIZE", str(int(args.batch_size)))
-    _set_default_env("VRX_MAX_SAMPLES", str(int(args.max_samples)))
-    _set_default_env("VRX_EVAL_SAMPLES", str(int(args.eval_samples)))
-    _set_default_env("VRX_LR", str(float(args.lr)))
+    _set_env("VRX_BATCH_SIZE", str(int(args.batch_size)), respect_existing=bool(args.respect_env))
+    _set_env("VRX_MAX_SAMPLES", str(int(args.max_samples)), respect_existing=bool(args.respect_env))
+    _set_env("VRX_EVAL_SAMPLES", str(int(args.eval_samples)), respect_existing=bool(args.respect_env))
+    _set_env("VRX_LR", str(float(args.lr)), respect_existing=bool(args.respect_env))
 
     _bootstrap_import_paths(repo_root)
 
