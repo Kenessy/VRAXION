@@ -1,0 +1,168 @@
+{
+  "cases": [
+    {
+      "name": "baseline_cpu_defaults",
+      "env": {
+        "VAR_COMPUTE_DEVICE": "cpu"
+      },
+      "expected": {
+        "device": "cpu",
+        "offline_only": true,
+        "ring_len": 8192,
+        "slot_dim": 576,
+        "precision": "fp32",
+        "dtype": "float32",
+        "ptr_dtype": "float64",
+        "use_amp": false,
+        "eval_split": "test",
+        "ptr_kernel": "gauss",
+        "thermo_enabled": false,
+        "panic_enabled": false,
+        "log_path_kind": "default",
+        "root_kind": "default"
+      }
+    },
+    {
+      "name": "cuda_fp16_enables_amp",
+      "env": {
+        "VAR_COMPUTE_DEVICE": "cuda",
+        "VRX_PRECISION": "fp16"
+      },
+      "expected": {
+        "device": "cuda",
+        "precision": "fp16",
+        "dtype": "float16",
+        "use_amp": true
+      }
+    },
+    {
+      "name": "cuda_fp64_forces_no_amp",
+      "env": {
+        "VAR_COMPUTE_DEVICE": "cuda",
+        "VRX_PRECISION": "fp64"
+      },
+      "expected": {
+        "device": "cuda",
+        "precision": "fp64",
+        "dtype": "float64",
+        "use_amp": false
+      }
+    },
+    {
+      "name": "ptr_dtype_bf16_override",
+      "env": {
+        "VAR_COMPUTE_DEVICE": "cpu",
+        "VRX_PTR_DTYPE": "bf16"
+      },
+      "expected": {
+        "ptr_dtype": "bfloat16"
+      }
+    },
+    {
+      "name": "eval_split_is_lowercased",
+      "env": {
+        "VAR_COMPUTE_DEVICE": "cpu",
+        "VRX_EVAL_SPLIT": "VaLiD"
+      },
+      "expected": {
+        "eval_split": "valid"
+      }
+    },
+    {
+      "name": "ptr_kernel_is_lowercased",
+      "env": {
+        "VAR_COMPUTE_DEVICE": "cpu",
+        "VRX_PTR_KERNEL": "GAUSS"
+      },
+      "expected": {
+        "ptr_kernel": "gauss"
+      }
+    },
+    {
+      "name": "log_path_empty_falls_back",
+      "env": {
+        "VAR_COMPUTE_DEVICE": "cpu",
+        "VAR_LOGGING_PATH": "   "
+      },
+      "expected": {
+        "log_path_kind": "default"
+      }
+    },
+    {
+      "name": "log_path_custom_is_used",
+      "env": {
+        "VAR_COMPUTE_DEVICE": "cpu",
+        "VAR_LOGGING_PATH": "X.log"
+      },
+      "expected": {
+        "log_path_kind": "custom",
+        "log_path": "X.log"
+      }
+    },
+    {
+      "name": "thermo_enabled_alias",
+      "env": {
+        "VAR_COMPUTE_DEVICE": "cpu",
+        "VRX_THERMO_ENABLED": "1"
+      },
+      "expected": {
+        "thermo_enabled": true
+      }
+    },
+    {
+      "name": "thermo_off_overrides_enabled",
+      "env": {
+        "VAR_COMPUTE_DEVICE": "cpu",
+        "VRX_THERMO_ENABLED": "1",
+        "VRX_THERMO": "0"
+      },
+      "expected": {
+        "thermo_enabled": false
+      }
+    },
+    {
+      "name": "panic_enabled_alias",
+      "env": {
+        "VAR_COMPUTE_DEVICE": "cpu",
+        "VRX_PANIC_ENABLED": "1"
+      },
+      "expected": {
+        "panic_enabled": true
+      }
+    },
+    {
+      "name": "offline_only_can_be_disabled",
+      "env": {
+        "VAR_COMPUTE_DEVICE": "cpu",
+        "VRX_OFFLINE_ONLY": "0"
+      },
+      "expected": {
+        "offline_only": false
+      }
+    },
+    {
+      "name": "project_root_override_is_respected",
+      "env": {
+        "VAR_COMPUTE_DEVICE": "cpu",
+        "VAR_PROJECT_ROOT": "ROOTX"
+      },
+      "expected": {
+        "root_kind": "custom",
+        "root": "ROOTX"
+      }
+    },
+    {
+      "name": "unknown_precision_defaults_to_fp32",
+      "env": {
+        "VAR_COMPUTE_DEVICE": "cpu",
+        "VRX_PRECISION": "wat"
+      },
+      "expected": {
+        "precision": "wat",
+        "dtype": "float32",
+        "use_amp": false
+      }
+    }
+  ]
+}
+

@@ -1,50 +1,21 @@
-# Python
 __pycache__/
 *.py[cod]
 *.pyo
-*.pyd
-*.egg-info/
-.venv/
-.env
 
-# Data/artifacts (exclude large datasets, keep small hand_kv)
-data/
-!data/hand_kv*.jsonl
+# Virtual envs
+.venv/
+venv/
+
+# Local runtime artifacts (keep out of Git)
 logs/
 traces/
-summaries/
-TRASH/
-review_pack/
-review_pack.zip
-proofs/
-
-# Local scripts / experiments
-run_*.ps1
-tail_*.ps1
-IGNITE_*.ps1
-bench_*/
-*.zip
-
-# Checkpoints / binaries
+bench_vault/
 checkpoints/
-checkpoint.pt
-*.pt
-*.pth
-*.ckpt
+hibernation*/
+summaries/
 
-# Misc local files
-audit_findings_temp.md
-1
+# Local-only archives / run DB
+vault/
 
-# OS
-.DS_Store
-Thumbs.db
-# Keep checkpoints, artifacts, logs, and transient outputs out of git
-checkpoint.pt
-artifacts/
-logs/
-*.log
-live_trace_*.json
-summary_*.json
-hibernation/
-hibernation_shadow/
+# Internal integration notes (not useful for end users)
+reports/

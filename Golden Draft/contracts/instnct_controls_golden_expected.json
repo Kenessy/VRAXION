@@ -1,0 +1,257 @@
+{
+  "agc": {
+    "cases": [
+      {
+        "expect": {
+          "log_contains": "[debug_scale_step0]",
+          "model_out": {
+            "agc_scale_cap": 1.0,
+            "debug_scale_out": 0.01,
+            "update_scale": 0.01
+          },
+          "scale_out": 0.01
+        },
+        "grad_norm": 0.05,
+        "id": "step0_floor",
+        "model_in": {
+          "agc_scale_max": 1.0,
+          "update_scale": 0.5
+        },
+        "step": 0
+      },
+      {
+        "expect": {
+          "model_out": {
+            "agc_scale_cap": 1.0,
+            "debug_scale_out": 0.022000000000000002,
+            "update_scale": 0.022000000000000002
+          },
+          "scale_out": 0.022000000000000002
+        },
+        "grad_norm": 0.0,
+        "id": "scale_up_low_grad",
+        "model_in": {
+          "agc_scale_max": 1.0,
+          "update_scale": 0.02
+        },
+        "step": 5
+      },
+      {
+        "expect": {
+          "model_out": {
+            "agc_scale_cap": 1.0,
+            "debug_scale_out": 0.018000000000000002,
+            "update_scale": 0.018000000000000002
+          },
+          "scale_out": 0.018000000000000002
+        },
+        "grad_norm": 1.0,
+        "id": "scale_down_high_grad",
+        "model_in": {
+          "agc_scale_max": 1.0,
+          "update_scale": 0.02
+        },
+        "step": 5
+      }
+    ],
+    "params": {
+      "enabled": true,
+      "grad_high": 0.2,
+      "grad_low": 0.01,
+      "scale_down": 0.9,
+      "scale_max_default": 1.0,
+      "scale_min": 0.01,
+      "scale_up": 1.1,
+      "warmup_init": 0.01,
+      "warmup_steps": 10
+    }
+  },
+  "inrtao": {
+    "cases": [
+      {
+        "expect": {
+          "model_out": {
+            "ptr_inertia": 0.6,
+            "ptr_inertia_ema": 0.6
+          }
+        },
+        "id": "vel_based",
+        "model_in": {
+          "ptr_inertia": 0.5,
+          "ptr_inertia_ema": 0.5
+        },
+        "panic_active": false,
+        "ptr_velocity": 0.5
+      },
+      {
+        "expect": {
+          "model_out": {
+            "ptr_inertia": 0.7,
+            "ptr_inertia_ema": 0.7
+          }
+        },
+        "id": "panic_blocks",
+        "model_in": {
+          "ptr_inertia": 0.7,
+          "ptr_inertia_ema": 0.7
+        },
+        "panic_active": true,
+        "ptr_velocity": 1.0
+      }
+    ],
+    "params": {
+      "dwell_enabled": false,
+      "dwell_thresh": 0.0,
+      "ema_beta": 0.5,
+      "enabled": true,
+      "inertia_max": 0.9,
+      "inertia_min": 0.5,
+      "vel_full": 1.0
+    }
+  },
+  "panic": {
+    "params": {
+      "ema_beta": 0.9,
+      "inertia_high": 0.95,
+      "inertia_low": 0.1,
+      "panic_threshold": 1.5,
+      "recovery_rate": 0.01,
+      "walk_prob_max": 0.2
+    },
+    "steps": [
+      {
+        "expect": {
+          "inertia": 0.95,
+          "status": "INIT",
+          "walk_prob": 0.0
+        },
+        "id": "init",
+        "loss": 1.0
+      },
+      {
+        "expect": {
+          "inertia": 0.95,
+          "status": "LOCKED",
+          "walk_prob": 0.0
+        },
+        "id": "no_panic",
+        "loss": 1.1
+      },
+      {
+        "expect": {
+          "status": "PANIC"
+        },
+        "id": "panic_trip",
+        "loss": 2.0
+      }
+    ]
+  },
+  "thermo": {
+    "cases": [
+      {
+        "ema_in": null,
+        "env": {},
+        "expect": {
+          "ema_out": 0.8,
+          "model_out": {
+            "ptr_deadzone": 0.095,
+            "ptr_inertia": 0.52885,
+            "ptr_walk_prob": 0.058333333333333334
+          }
+        },
+        "flip_rate": 0.8,
+        "focus": 0.9,
+        "id": "focus_tension_path",
+        "model_in": {
+          "ptr_deadzone": 0.1,
+          "ptr_inertia": 0.5,
+          "ptr_walk_prob": 0.05
+        },
+        "raw_delta": 0.5,
+        "tension": 0.1
+      },
+      {
+        "ema_in": 0.4,
+        "env": {},
+        "expect": {
+          "ema_out": 0.39,
+          "model_out": {
+            "ptr_deadzone": 0.03,
+            "ptr_inertia": 0.25,
+            "ptr_walk_prob": 0.19
+          }
+        },
+        "flip_rate": 0.3,
+        "focus": null,
+        "id": "step_up_on_flip",
+        "model_in": {
+          "ptr_deadzone": 0.01,
+          "ptr_inertia": 0.2,
+          "ptr_walk_prob": 0.2
+        },
+        "raw_delta": null,
+        "tension": null
+      },
+      {
+        "ema_in": 0.12,
+        "env": {},
+        "expect": {
+          "ema_out": 0.113,
+          "model_out": {
+            "ptr_deadzone": 0.2,
+            "ptr_inertia": 0.3,
+            "ptr_walk_prob": 0.0
+          }
+        },
+        "flip_rate": 0.05,
+        "focus": null,
+        "id": "step_down_on_low_flip",
+        "model_in": {
+          "ptr_deadzone": 0.2,
+          "ptr_inertia": 0.3,
+          "ptr_walk_prob": 0.0
+        },
+        "raw_delta": null,
+        "tension": null
+      },
+      {
+        "ema_in": 0.9,
+        "env": {
+          "VRX_PTR_INERTIA_OVERRIDE": "1"
+        },
+        "expect": {
+          "ema_out": 0.9,
+          "model_out": {
+            "ptr_deadzone": 0.44,
+            "ptr_inertia": 0.33,
+            "ptr_walk_prob": 0.11
+          }
+        },
+        "flip_rate": 0.9,
+        "focus": null,
+        "id": "env_override_no_mutation",
+        "model_in": {
+          "ptr_deadzone": 0.44,
+          "ptr_inertia": 0.33,
+          "ptr_walk_prob": 0.11
+        },
+        "raw_delta": null,
+        "tension": null
+      }
+    ],
+    "params": {
+      "deadzone_max": 0.5,
+      "deadzone_min": 0.0,
+      "deadzone_step": 0.02,
+      "ema_beta": 0.9,
+      "inertia_max": 0.95,
+      "inertia_min": 0.1,
+      "inertia_step": 0.05,
+      "target_flip": 0.2,
+      "walk_max": 0.2,
+      "walk_min": 0.0,
+      "walk_step": 0.01
+    }
+  }
+}
+

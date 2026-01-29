@@ -1,15 +1,29 @@
-# VRAXION™ (Research Prototype) [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.18332532.svg)](https://doi.org/10.5281/zenodo.18332532)
+# VRAXION Golden Targets
 
-This repository is a noncommercial research snapshot. It omits run instructions and experimental details.
+This repo root contains two curated targets:
 
-- Live site (GitHub Pages): <a href="https://kenessy.github.io/VRAXION/" target="_blank" rel="noopener noreferrer">https://kenessy.github.io/VRAXION/</a>
-- License: PolyForm Noncommercial 1.0.0. See `LICENSE`, `NOTICE`, `COMMERCIAL_LICENSE.md`.
-- Commercial use: contact `kenessy.dani@gmail.com`.
-- Trademark: VRAXION™ — mark filing is intended; no registration granted yet.
-- No warranty; not production-ready.
+- `Golden Code/`: end-user ("DVD") runtime library code only.
+  - Primary package: `Golden Code/vraxion/`
+- `Golden Draft/`: production-quality, non-DVD code (tools, tests, harness).
 
-Source code remains for archival and research purposes. Documentation, data, and scripts have been removed from this public snapshot.
+## Quick commands
 
-## Cite
-If you use PRIME C-19 in research, please cite:
-- Zenodo (latest): https://doi.org/10.5281/zenodo.18332532
+From `Golden Draft/`:
+
+```powershell
+python vraxion_run.py
+python VRAXION_INFINITE.py
+python tools/eval_only.py
+python -m unittest discover -s tests -v
+```
+
+Sanity compile gate:
+
+```powershell
+python -m compileall "Golden Code" "Golden Draft"
+```
+
+## Naming conventions
+
+- Runtime env vars use the `VRX_` prefix.
+- Legacy naming (`prime_c19`, `tournament_phase6`, `TP6_*`) is intentionally removed from the active code surface.
