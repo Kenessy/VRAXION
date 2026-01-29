@@ -84,6 +84,8 @@ class TestRunDb(unittest.TestCase):
                     str(db_root),
                     "--run-name",
                     "smoke",
+                    "--env",
+                    "VRX_TEST_FLAG=1",
                     "--",
                     PY,
                     "-B",
@@ -123,6 +125,21 @@ class TestRunDb(unittest.TestCase):
                 row = con.execute(
                     "SELECT run_id, exit_code, n_loss, loss_min, loss_max FROM runs"
                 ).fetchone()
+
+                # Streaming events table should include the parsed step/loss rows.
+                rid = run_dir.name
+                ev_rows = con.execute(
+                    "SELECT step, loss FROM events WHERE run_id = ? ORDER BY seq ASC",
+                    [rid],
+                ).fetchall()
+                steps = sorted({r[0] for r in ev_rows if r[0] is not None})
+                self.assertEqual(steps, [1, 2])
+
+                # env_kv should include env overrides (for cross-run pattern queries).
+                env_val = con.execute(
+                    "SELECT env_val FROM env_kv WHERE run_id = ? AND env_key = ?",
+                    [rid, "VRX_TEST_FLAG"],
+                ).fetchone()
             finally:
                 con.close()
 
@@ -132,6 +149,10 @@ class TestRunDb(unittest.TestCase):
             self.assertEqual(row[2], 2)
             self.assertAlmostEqual(row[3], 0.1234, places=7)
             self.assertAlmostEqual(row[4], 0.2345, places=7)
+
+            self.assertIsNotNone(env_val)
+            assert env_val is not None
+            self.assertEqual(env_val[0], "1")
 
 
 if __name__ == "__main__":

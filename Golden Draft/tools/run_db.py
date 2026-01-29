@@ -104,73 +104,192 @@ def _git_info(root: Path) -> Dict[str, Any]:
     return info
 
 
-def _ensure_sqlite(db_path: Path) -> None:
+def _sqlite_connect(db_path: Path) -> sqlite3.Connection:
+    """Open sqlite with reader-friendly settings (WAL) for live dashboards."""
+
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    con = sqlite3.connect(str(db_path))
+    con = sqlite3.connect(str(db_path), timeout=30.0, check_same_thread=False)
+
+    # Best-effort pragmas: never fail the run due to sqlite tuning.
     try:
-        con.execute(
-            """
-            CREATE TABLE IF NOT EXISTS runs (
-              run_id TEXT PRIMARY KEY,
-              start_utc TEXT,
-              end_utc TEXT,
-              duration_s REAL,
-              cwd TEXT,
-              cmd TEXT,
-              git_commit TEXT,
-              git_dirty INTEGER,
-              exit_code INTEGER,
-              run_name TEXT,
-              tags TEXT,
-              meta_path TEXT,
-              summary_path TEXT,
-              loss_mean REAL,
-              loss_std REAL,
-              loss_min REAL,
-              loss_max REAL,
-              n_loss INTEGER
+        con.execute("PRAGMA journal_mode=WAL")
+        con.execute("PRAGMA synchronous=NORMAL")
+        con.execute("PRAGMA busy_timeout=5000")
+    except Exception:
+        pass
+
+    return con
+
+
+def _ensure_sqlite(con: sqlite3.Connection) -> None:
+    con.execute(
+        """
+        CREATE TABLE IF NOT EXISTS runs (
+          run_id TEXT PRIMARY KEY,
+          start_utc TEXT,
+          end_utc TEXT,
+          duration_s REAL,
+          cwd TEXT,
+          cmd TEXT,
+          git_commit TEXT,
+          git_dirty INTEGER,
+          exit_code INTEGER,
+          run_name TEXT,
+          tags TEXT,
+          meta_path TEXT,
+          summary_path TEXT,
+          loss_mean REAL,
+          loss_std REAL,
+          loss_min REAL,
+          loss_max REAL,
+          n_loss INTEGER
+        )
+        """
+    )
+    con.execute("CREATE INDEX IF NOT EXISTS runs_start ON runs(start_utc)")
+
+    # Key-value env snapshot for cross-run pattern queries (only VRX_/VAR_ keys).
+    con.execute(
+        """
+        CREATE TABLE IF NOT EXISTS env_kv (
+          run_id TEXT,
+          env_key TEXT,
+          env_val TEXT,
+          PRIMARY KEY (run_id, env_key)
+        )
+        """
+    )
+    con.execute("CREATE INDEX IF NOT EXISTS env_kv_key_val ON env_kv(env_key, env_val)")
+
+    # Streaming metrics/events table for live dashboards.
+    con.execute(
+        """
+        CREATE TABLE IF NOT EXISTS events (
+          run_id TEXT,
+          seq INTEGER,
+          ts_utc TEXT,
+          stream TEXT,
+          step INTEGER,
+          loss REAL,
+          vcog_json TEXT,
+          event_json TEXT,
+          PRIMARY KEY (run_id, seq)
+        )
+        """
+    )
+    con.execute("CREATE INDEX IF NOT EXISTS events_run_step ON events(run_id, step)")
+    con.execute("CREATE INDEX IF NOT EXISTS events_run_ts ON events(run_id, ts_utc)")
+
+    con.commit()
+
+
+def _insert_sqlite_run(con: sqlite3.Connection, row: Dict[str, Any]) -> None:
+    cols = [
+        "run_id",
+        "start_utc",
+        "end_utc",
+        "duration_s",
+        "cwd",
+        "cmd",
+        "git_commit",
+        "git_dirty",
+        "exit_code",
+        "run_name",
+        "tags",
+        "meta_path",
+        "summary_path",
+        "loss_mean",
+        "loss_std",
+        "loss_min",
+        "loss_max",
+        "n_loss",
+    ]
+    vals = [row.get(c) for c in cols]
+    placeholders = ",".join(["?"] * len(cols))
+    con.execute(
+        f"INSERT OR REPLACE INTO runs ({','.join(cols)}) VALUES ({placeholders})",
+        vals,
+    )
+    con.commit()
+
+
+class _SqliteEventSink:
+    """Buffered sqlite event writer (single-writer, safe under a shared lock)."""
+
+    def __init__(
+        self,
+        con: sqlite3.Connection,
+        *,
+        run_id: str,
+        commit_every: int = 50,
+        commit_interval_s: float = 1.0,
+    ) -> None:
+        self._con = con
+        self._run_id = run_id
+        self._seq = 0
+        self._pending = 0
+        self._commit_every = max(1, int(commit_every))
+        self._commit_interval_s = max(0.0, float(commit_interval_s))
+        self._last_commit = time.monotonic()
+        self._in_tx = False
+        self._failed = False
+
+    def record(self, *, stream_name: str, ev: Dict[str, Any], vcog: Optional[Dict[str, Any]]) -> None:
+        if self._failed:
+            return
+
+        try:
+            if not self._in_tx:
+                self._con.execute("BEGIN")
+                self._in_tx = True
+
+            seq = int(self._seq)
+            self._seq += 1
+
+            ts_utc = ev.get("ts_utc")
+            step = ev.get("step")
+            loss = ev.get("loss")
+            vcog_json = _safe_json_dumps(vcog) if vcog is not None else None
+            event_json = _safe_json_dumps(ev)
+
+            self._con.execute(
+                "INSERT OR REPLACE INTO events (run_id, seq, ts_utc, stream, step, loss, vcog_json, event_json) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                [
+                    self._run_id,
+                    seq,
+                    ts_utc,
+                    str(stream_name),
+                    step,
+                    loss,
+                    vcog_json,
+                    event_json,
+                ],
             )
-            """
-        )
-        con.execute("CREATE INDEX IF NOT EXISTS runs_start ON runs(start_utc)")
-        con.commit()
-    finally:
-        con.close()
 
+            self._pending += 1
 
-def _insert_sqlite(db_path: Path, row: Dict[str, Any]) -> None:
-    _ensure_sqlite(db_path)
-    con = sqlite3.connect(str(db_path))
-    try:
-        cols = [
-            "run_id",
-            "start_utc",
-            "end_utc",
-            "duration_s",
-            "cwd",
-            "cmd",
-            "git_commit",
-            "git_dirty",
-            "exit_code",
-            "run_name",
-            "tags",
-            "meta_path",
-            "summary_path",
-            "loss_mean",
-            "loss_std",
-            "loss_min",
-            "loss_max",
-            "n_loss",
-        ]
-        vals = [row.get(c) for c in cols]
-        placeholders = ",".join(["?"] * len(cols))
-        con.execute(
-            f"INSERT OR REPLACE INTO runs ({','.join(cols)}) VALUES ({placeholders})",
-            vals,
-        )
-        con.commit()
-    finally:
-        con.close()
+            now = time.monotonic()
+            if self._pending >= self._commit_every or (now - self._last_commit) >= self._commit_interval_s:
+                self.flush()
+        except Exception as exc:
+            self._failed = True
+            try:
+                sys.stderr.write(f"[run_db] sqlite events disabled: {exc!r}\n")
+            except Exception:
+                pass
+
+    def flush(self) -> None:
+        if self._failed:
+            return
+        if not self._in_tx:
+            return
+        try:
+            self._con.commit()
+        finally:
+            self._in_tx = False
+            self._pending = 0
+            self._last_commit = time.monotonic()
 
 
 def _create_run_dir(runs_dir: Path, run_id_base: str) -> Tuple[str, Path]:
@@ -212,6 +331,7 @@ def _record_metrics_line(
     lock: threading.Lock,
     loss_stats: OnlineStats,
     last_vcog: MutableMapping[str, Any],
+    event_sink: Optional[_SqliteEventSink] = None,
 ) -> None:
     ev, vcog = parse_line(line)
     if ev is None and vcog is None:
@@ -237,6 +357,9 @@ def _record_metrics_line(
         metrics_fp.write(_safe_json_dumps(ev) + "\n")
         metrics_fp.flush()
 
+        if event_sink is not None:
+            event_sink.record(stream_name=stream_name, ev=ev, vcog=vcog)
+
 
 def _pump_stream(
     *,
@@ -247,6 +370,7 @@ def _pump_stream(
     lock: threading.Lock,
     loss_stats: OnlineStats,
     last_vcog: MutableMapping[str, Any],
+    event_sink: Optional[_SqliteEventSink] = None,
 ) -> None:
     """Continuously drain a subprocess pipe.
 
@@ -272,6 +396,7 @@ def _pump_stream(
                 lock=lock,
                 loss_stats=loss_stats,
                 last_vcog=last_vcog,
+                event_sink=event_sink,
             )
 
     try:
@@ -307,6 +432,7 @@ def _pump_stream(
                 lock=lock,
                 loss_stats=loss_stats,
                 last_vcog=last_vcog,
+                event_sink=event_sink,
             )
     except Exception:
         # Never let a reader thread crash the whole recorder.
@@ -362,11 +488,52 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"
+
+    # Default to an isolated per-run root so artifacts stay together.
+    # Callers can override by setting these in the parent env or via --env.
+    env.setdefault("VAR_PROJECT_ROOT", str(run_dir))
+    env.setdefault("VAR_LOGGING_PATH", str(run_dir / "vraxion.log"))
+
     for kv in args.env:
         if "=" not in kv:
             raise SystemExit(f"--env expects KEY=VAL, got: {kv}")
         k, v = kv.split("=", 1)
         env[k] = v
+
+    # Optional sqlite writer (streaming events + cross-run indexing).
+    db_path = db_root / "runs.sqlite"
+    sql_con: Optional[sqlite3.Connection] = None
+    event_sink: Optional[_SqliteEventSink] = None
+    if not args.no_sqlite:
+        try:
+            sql_con = _sqlite_connect(db_path)
+            _ensure_sqlite(sql_con)
+            event_sink = _SqliteEventSink(sql_con, run_id=run_id)
+
+            # Snapshot VRX_/VAR_ env keys for later pattern queries.
+            rows = []
+            for k in sorted(env.keys()):
+                if k.startswith("VRX_") or k.startswith("VAR_"):
+                    rows.append((run_id, k, str(env.get(k, ""))))
+            if rows:
+                sql_con.executemany(
+                    "INSERT OR REPLACE INTO env_kv (run_id, env_key, env_val) VALUES (?, ?, ?)",
+                    rows,
+                )
+                sql_con.commit()
+        except Exception as errval:
+            # Never fail the run because sqlite is unavailable/misconfigured.
+            try:
+                print(f"[run_db] sqlite disabled: {errval!r}", file=sys.stderr)
+            except Exception:
+                pass
+            try:
+                if sql_con is not None:
+                    sql_con.close()
+            except Exception:
+                pass
+            sql_con = None
+            event_sink = None
 
     g = _git_info(repo)
     meta: Dict[str, Any] = {
@@ -426,6 +593,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                     "lock": lock,
                     "loss_stats": loss_stats,
                     "last_vcog": last_vcog,
+                    "event_sink": event_sink,
                 },
                 daemon=True,
             )
@@ -439,6 +607,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                     "lock": lock,
                     "loss_stats": loss_stats,
                     "last_vcog": last_vcog,
+                    "event_sink": event_sink,
                 },
                 daemon=True,
             )
@@ -488,7 +657,6 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(f"[run_db] failed to write summary.json: {errval!r}", file=sys.stderr)
 
     if not args.no_sqlite:
-        db_path = db_root / "runs.sqlite"
         row = {
             "run_id": run_id,
             "start_utc": meta["start_utc"],
@@ -510,9 +678,20 @@ def main(argv: Optional[List[str]] = None) -> int:
             "n_loss": summary["loss"]["n"],
         }
         try:
-            _insert_sqlite(db_path, row)
+            if event_sink is not None:
+                event_sink.flush()
+            if sql_con is None:
+                sql_con = _sqlite_connect(db_path)
+                _ensure_sqlite(sql_con)
+            _insert_sqlite_run(sql_con, row)  # type: ignore[arg-type]
         except Exception as errval:
             print(f"[run_db] sqlite index failed: {errval!r}", file=sys.stderr)
+        finally:
+            try:
+                if sql_con is not None:
+                    sql_con.close()
+            except Exception:
+                pass
 
     # Non-negotiable: single line at end with the run_dir path.
     print(str(run_dir))
