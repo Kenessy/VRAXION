@@ -78,6 +78,8 @@ def _run(cmd: Sequence[str], *, cwd: Optional[Path] = None) -> subprocess.Comple
         cwd=str(cwd) if cwd is not None else None,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         check=False,
     )
 
