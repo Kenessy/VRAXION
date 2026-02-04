@@ -19,3 +19,9 @@ vault/
 
 # Internal integration notes (not useful for end users)
 reports/
+
+# Local state for vrx_sync_linear_projects.py
+.vrx_sync_state.json
+
+# Local Linear export snapshots (first-run fallback; do not commit)
+.vrx_sync_*export*.json
