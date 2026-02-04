@@ -1,0 +1,17 @@
+{
+  "schema_version": "workload_schema_v1",
+  "ant_spec": {
+    "ring_len": 2048,
+    "slot_dim": 256,
+    "ptr_dtype": "fp64",
+    "precision": "fp32"
+  },
+  "colony_spec": {
+    "seq_len": 128,
+    "synth_len": 128,
+    "batch_size": 4,
+    "ptr_update_every": 1,
+    "state_loop_samples": 0
+  }
+}
+
