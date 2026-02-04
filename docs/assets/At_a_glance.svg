@@ -1,0 +1,267 @@
+<svg width="1200" height="380" viewBox="0 0 1200 380" fill="none"
+     xmlns="http://www.w3.org/2000/svg"
+     role="img" aria-labelledby="title desc">
+  <title id="title">VRAXION — At a glance</title>
+  <desc id="desc">
+    Three production-grade pillars: Recursive latent refinement, Topological entropy reduction,
+    and Inherent opacity risk. Designed for GitHub dark themes with clear separation of graphics
+    and text, conservative animation, and research-facing language.
+  </desc>
+
+  <!-- =========================
+       DEFINITIONS
+       ========================= -->
+  <defs>
+    <!-- Subtle glows (kept deliberately soft) -->
+    <filter id="glow_cyan" x="-120%" y="-120%" width="340%" height="340%" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="2.5" result="b"/>
+      <feMerge>
+        <feMergeNode in="b"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <filter id="glow_magenta" x="-120%" y="-120%" width="340%" height="340%" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="2.5" result="b"/>
+      <feMerge>
+        <feMergeNode in="b"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <!-- Circuit background grid -->
+    <pattern id="circuit_grid" x="0" y="0" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M40 0 L0 0 0 40" fill="none" stroke="#1A2130" stroke-width="1"/>
+    </pattern>
+
+    <!-- Beam gradient -->
+    <linearGradient id="beam_grad" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#FF00FF" stop-opacity="0"/>
+      <stop offset="60%" stop-color="#FF00FF" stop-opacity="0.9"/>
+      <stop offset="100%" stop-color="#B000FF" stop-opacity="0.9"/>
+    </linearGradient>
+  </defs>
+
+  <!-- =========================
+       BACKGROUND
+       ========================= -->
+  <rect width="1200" height="380" rx="10" fill="#0d1117"/>
+  <rect width="1200" height="380" fill="url(#circuit_grid)" opacity="0.22"/>
+  <rect x="0.5" y="0.5" width="1199" height="379" rx="10"
+        stroke="#30363d" stroke-width="1"/>
+
+  <!-- =========================
+       HEADER
+       ========================= -->
+  <text x="28" y="34"
+        font-family="'Segoe UI', system-ui, -apple-system, sans-serif"
+        font-weight="800" font-size="18"
+        fill="#E2E8F0" letter-spacing="1.1">
+    VRAXION · AT A GLANCE
+  </text>
+  <text x="28" y="56"
+        font-family="'Segoe UI', system-ui, -apple-system, sans-serif"
+        font-size="13" fill="#A0AEC0">
+    Three pillars used to communicate the agenda (specs &amp; evidence live in the Wiki).
+  </text>
+
+  <!-- =========================
+       PANEL CONTAINERS
+       ========================= -->
+  <g>
+    <rect x="20"  y="86" width="360" height="264" rx="14" fill="#0b1220" stroke="#243041"/>
+    <rect x="420" y="86" width="360" height="264" rx="14" fill="#0b1220" stroke="#243041"/>
+    <rect x="820" y="86" width="360" height="264" rx="14" fill="#0b1220" stroke="#243041"/>
+  </g>
+
+  <!-- Graphic/Text separators -->
+  <line x1="20"  y1="202" x2="380"  y2="202" stroke="#1A2130"/>
+  <line x1="420" y1="202" x2="780"  y2="202" stroke="#1A2130"/>
+  <line x1="820" y1="202" x2="1180" y2="202" stroke="#1A2130"/>
+
+  <!-- ===================================================== -->
+  <!-- PILLAR 01 — RECURSIVE LATENT REFINEMENT -->
+  <!-- ===================================================== -->
+  <g>
+    <text x="40" y="112"
+          font-family="'Segoe UI', system-ui, -apple-system, sans-serif"
+          font-size="12" font-weight="700"
+          fill="#6B7280" letter-spacing="1.3">
+      PILLAR 01
+    </text>
+
+    <!-- Graphic -->
+    <g transform="translate(200,140)">
+      <circle r="58" fill="#00F0FF" opacity="0.03"/>
+      <circle r="46" fill="none" stroke="#1A2130" stroke-width="2"/>
+      <circle r="46" fill="none" stroke="#00F0FF" stroke-width="3"
+              stroke-dasharray="70 220" stroke-linecap="round" opacity="0.85">
+        <animateTransform type="rotate" from="0 0 0" to="360 0 0"
+                          dur="9s" repeatCount="indefinite"/>
+      </circle>
+
+      <circle r="28" fill="#0A0C12" stroke="#00F0FF"/>
+      <circle r="9" fill="#00F0FF" opacity="0.55" filter="url(#glow_cyan)">
+        <animate attributeName="opacity"
+                 values="0.4;0.75;0.4"
+                 dur="4s" repeatCount="indefinite"/>
+      </circle>
+    </g>
+
+    <!-- Text -->
+    <text x="40" y="232"
+          font-family="'Segoe UI', system-ui, -apple-system, sans-serif"
+          font-size="16" font-weight="800"
+          fill="#00F0FF" letter-spacing="0.8" filter="url(#glow_cyan)">
+      RECURSIVE LATENT REFINEMENT
+    </text>
+    <text x="40" y="256"
+          font-family="'Segoe UI', system-ui, -apple-system, sans-serif"
+          font-size="14.5" fill="#A0AEC0">
+      <tspan x="40" dy="0">Iterate an internal state-update loop before</tspan>
+      <tspan x="40" dy="20">token emission, allowing depth to accumulate</tspan>
+      <tspan x="40" dy="20">in latent space without expanding context.</tspan>
+    </text>
+    <text x="40" y="322"
+          font-family="'Segoe UI', system-ui, -apple-system, sans-serif"
+          font-size="12.5" fill="#6B7280">
+      Implication: stability gates and telemetry are required.
+    </text>
+  </g>
+
+  <!-- ===================================================== -->
+  <!-- PILLAR 02 — TOPOLOGICAL ENTROPY REDUCTION -->
+  <!-- ===================================================== -->
+  <g>
+    <text x="440" y="112"
+          font-family="'Segoe UI', system-ui, -apple-system, sans-serif"
+          font-size="12" font-weight="700"
+          fill="#6B7280" letter-spacing="1.3">
+      PILLAR 02
+    </text>
+
+    <!-- Graphic -->
+    <g transform="translate(600,140)">
+      <circle r="58" fill="#FF00FF" opacity="0.03"/>
+
+      <!-- Input rays -->
+      <line x1="-80" y1="-20" x2="-20" y2="-6"
+            stroke="#FF00FF" stroke-width="1" opacity="0.55"
+            stroke-dasharray="6 10">
+        <animate attributeName="stroke-dashoffset"
+                 values="0;24" dur="3s" repeatCount="indefinite"/>
+      </line>
+      <line x1="-80" y1="10" x2="-20" y2="2"
+            stroke="#FF00FF" stroke-width="1" opacity="0.75"
+            stroke-dasharray="6 12">
+        <animate attributeName="stroke-dashoffset"
+                 values="0;28" dur="3.5s" repeatCount="indefinite"/>
+      </line>
+
+      <!-- Prism -->
+      <path d="M -20 -36 L 40 0 L -20 36 Z"
+            fill="#0A0C12" stroke="#FF00FF" stroke-width="2.2"
+            filter="url(#glow_magenta)">
+        <animate attributeName="stroke-opacity"
+                 values="1;0.7;1"
+                 dur="4.5s" repeatCount="indefinite"/>
+      </path>
+
+      <!-- Output beam -->
+      <rect x="40" y="-2" width="86" height="4" rx="2"
+            fill="url(#beam_grad)" filter="url(#glow_magenta)">
+        <animate attributeName="opacity"
+                 values="0.7;0.95;0.7"
+                 dur="3s" repeatCount="indefinite"/>
+      </rect>
+    </g>
+
+    <!-- Text -->
+    <text x="440" y="232"
+          font-family="'Segoe UI', system-ui, -apple-system, sans-serif"
+          font-size="16" font-weight="800"
+          fill="#FF00FF" letter-spacing="0.8" filter="url(#glow_magenta)">
+      TOPOLOGICAL ENTROPY REDUCTION
+    </text>
+    <text x="440" y="256"
+          font-family="'Segoe UI', system-ui, -apple-system, sans-serif"
+          font-size="14.5" fill="#A0AEC0">
+      <tspan x="440" dy="0">Map high-variance signals onto sparse,</tspan>
+      <tspan x="440" dy="20">discrete representations to reduce noise</tspan>
+      <tspan x="440" dy="20">and bias toward repeatable computation.</tspan>
+    </text>
+    <text x="440" y="322"
+          font-family="'Segoe UI', system-ui, -apple-system, sans-serif"
+          font-size="12.5" fill="#6B7280">
+      Trade-off: discretization can lose information; measure it.
+    </text>
+  </g>
+
+  <!-- ===================================================== -->
+  <!-- PILLAR 03 — INHERENT OPACITY RISK -->
+  <!-- ===================================================== -->
+  <g>
+    <text x="840" y="112"
+          font-family="'Segoe UI', system-ui, -apple-system, sans-serif"
+          font-size="12" font-weight="700"
+          fill="#6B7280" letter-spacing="1.3">
+      PILLAR 03
+    </text>
+
+    <!-- Graphic -->
+    <g transform="translate(1000,140)">
+      <circle r="58" fill="#00F0FF" opacity="0.025"/>
+
+      <path d="M -80 0 Q -60 -18 -40 0 T 0 0 T 40 0 T 80 0"
+            fill="none" stroke="#2D3748" stroke-width="1" opacity="0.4"/>
+
+      <!-- Lens -->
+      <path d="M -30 -28 L -20 -28 L -20 28 L -30 28"
+            fill="none" stroke="#00F0FF" stroke-width="2"
+            filter="url(#glow_cyan)"/>
+      <path d="M 30 -28 L 20 -28 L 20 28 L 30 28"
+            fill="none" stroke="#00F0FF" stroke-width="2"
+            filter="url(#glow_cyan)"/>
+
+      <!-- Scan line -->
+      <line x1="-16" y1="-30" x2="-16" y2="30"
+            stroke="#FF00FF" stroke-width="1" opacity="0.7">
+        <animate attributeName="x1"
+                 values="-16;16;-16"
+                 dur="5s" repeatCount="indefinite"/>
+        <animate attributeName="x2"
+                 values="-16;16;-16"
+                 dur="5s" repeatCount="indefinite"/>
+      </line>
+    </g>
+
+    <!-- Text -->
+    <text x="840" y="232"
+          font-family="'Segoe UI', system-ui, -apple-system, sans-serif"
+          font-size="16" font-weight="800"
+          fill="#FFFFFF" letter-spacing="0.8">
+      INHERENT OPACITY RISK
+    </text>
+    <text x="840" y="256"
+          font-family="'Segoe UI', system-ui, -apple-system, sans-serif"
+          font-size="14.5" fill="#A0AEC0">
+      <tspan x="840" dy="0">Non-token computation is harder to audit</tspan>
+      <tspan x="840" dy="20">than text output. Mitigate with probes,</tspan>
+      <tspan x="840" dy="20">telemetry, and artifact-backed evaluation.</tspan>
+    </text>
+    <text x="840" y="322"
+          font-family="'Segoe UI', system-ui, -apple-system, sans-serif"
+          font-size="12.5" fill="#6B7280">
+      Rule: unexplained wins remain suspect until reproduced.
+    </text>
+  </g>
+
+  <!-- =========================
+       CREDIT
+       ========================= -->
+  <text x="1172" y="366" text-anchor="end"
+        font-family="'Segoe UI', system-ui, -apple-system, sans-serif"
+        font-size="12" fill="#A0AEC0" opacity="0.75">
+    Made by Daniel Kenessy
+  </text>
+</svg>
