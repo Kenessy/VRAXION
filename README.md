@@ -6,6 +6,23 @@ This repo root contains two curated targets:
   - Primary package: `Golden Code/vraxion/`
 - `Golden Draft/`: production-quality, non-DVD code (tools, tests, harness).
 
+## Where to look
+
+- Pages (landing): https://kenessy.github.io/VRAXION/
+- Wiki (deep dives): https://github.com/Kenessy/VRAXION/wiki
+- Roadmap (public): https://github.com/users/Kenessy/projects/4
+- Releases (public proof): https://github.com/Kenessy/VRAXION/releases
+
+## Versioning (MAJOR.MINOR.BUILD)
+
+VRAXION uses a simple cadence tracker stored in `VERSION.json`:
+
+- `BUILD` increments on every merged "ticket completion" PR (fast/beta cadence).
+- `MINOR` increments only for curated public updates (BUILD unchanged).
+- `MAJOR` increments only for lifetime milestones (MINOR resets to 0; BUILD unchanged).
+
+This does not replace the historical release tag `v1.0.0`.
+
 ## Quick commands
 
 From `Golden Draft/`:
