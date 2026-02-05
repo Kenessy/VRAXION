@@ -16,6 +16,7 @@ Design constraints:
 from __future__ import annotations
 
 import argparse
+import enum
 import json
 import os
 import subprocess
@@ -44,6 +45,126 @@ def _atomic_write_json(path: Path, payload: Dict[str, Any]) -> None:
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(json.dumps(payload, sort_keys=True, indent=2), encoding="utf-8")
     tmp.replace(path)
+
+
+def _jsonl_append(path: Path, payload: Dict[str, Any]) -> None:
+    _ensure_dir(path.parent)
+    with path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(payload, sort_keys=True) + "\n")
+
+
+class WatchdogStage(enum.IntEnum):
+    OK = 0
+    SURGE = 1
+    SPILL = 2
+    BREACH = 3
+    WASHOUT = 4
+
+
+def _compute_watchdog_stage(no_output_s: float, surge_s: float, spill_s: float, breach_s: float) -> WatchdogStage:
+    # Strictly monotone staging as "no output" grows. Stages are only meaningful
+    # if breach_s > 0. Caller must ensure ordered thresholds.
+    if breach_s <= 0.0:
+        return WatchdogStage.OK
+    if no_output_s >= breach_s:
+        return WatchdogStage.BREACH
+    if spill_s > 0.0 and no_output_s >= spill_s:
+        return WatchdogStage.SPILL
+    if surge_s > 0.0 and no_output_s >= surge_s:
+        return WatchdogStage.SURGE
+    return WatchdogStage.OK
+
+
+def _tail_lines(path: Path, max_lines: int) -> List[str]:
+    if max_lines <= 0 or not path.exists():
+        return []
+    # Read whole file for simplicity; logs are typically small-ish. If this ever
+    # becomes too large, replace with a bounded tail reader by bytes.
+    try:
+        txt = path.read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return []
+    lines = txt.splitlines()
+    return lines[-max_lines:]
+
+
+def _write_log_tail(job_root: Path, out_log: Path, err_log: Path, tail_lines: int) -> Path:
+    tail_path = job_root / "child_log_tail.txt"
+    out_tail = _tail_lines(out_log, tail_lines)
+    err_tail = _tail_lines(err_log, tail_lines)
+    chunks: List[str] = []
+    chunks.append("=== child_stdout.log (tail) ===")
+    chunks.extend(out_tail or ["<empty>"])
+    chunks.append("")
+    chunks.append("=== child_stderr.log (tail) ===")
+    chunks.extend(err_tail or ["<empty>"])
+    tail_path.write_text("\n".join(chunks).rstrip("\n") + "\n", encoding="utf-8")
+    return tail_path
+
+
+def _append_failure_summary(
+    job_root: Path,
+    *,
+    stage: WatchdogStage,
+    reason: str,
+    attempt: int,
+    child_pid: int,
+    no_output_s: float,
+    watchdog_s: float,
+) -> Path:
+    summ_path = job_root / "failure_summary.md"
+    lines: List[str] = []
+    lines.append(f"## {stage.name} - {reason}")
+    lines.append("")
+    lines.append(f"- utc: `{_utc_iso()}`")
+    lines.append(f"- attempt: `{attempt}`")
+    lines.append(f"- child_pid: `{child_pid}`")
+    lines.append(f"- no_output_s: `{no_output_s:.1f}`")
+    lines.append(f"- watchdog_no_output_s: `{watchdog_s:.1f}`")
+    lines.append("")
+    with summ_path.open("a", encoding="utf-8") as f:
+        f.write("\n".join(lines))
+        f.write("\n")
+    return summ_path
+
+
+def _default_status_path(repo_root: Path) -> Path:
+    return repo_root / "bench_vault" / "_tmp" / "nightmode_status.md"
+
+
+def _write_watchdog_state(
+    state_path: Path,
+    *,
+    job_root: Path,
+    stage: WatchdogStage,
+    reason: str,
+    attempt: int,
+    failures: int,
+    child_pid: int,
+    no_output_s: float,
+    watchdog_s: float,
+    kill_count: int,
+    degrade_level: str,
+) -> None:
+    payload = {
+        "version": 1,
+        "updated_utc": _utc_iso(),
+        "job_root": str(job_root),
+        "stage": stage.name,
+        "reason": str(reason),
+        "attempt": int(attempt),
+        "failures": int(failures),
+        "child_pid": int(child_pid),
+        "no_output_s": float(no_output_s),
+        "watchdog_no_output_s": float(watchdog_s),
+        "kill_count": int(kill_count),
+        "degrade_level": str(degrade_level),
+        # Placeholders for future signal integration (kept explicit for schema stability).
+        "step_ratio_p95_over_median": None,
+        "vram_reserved_ratio": None,
+        "gpu_util_zero_s": None,
+    }
+    _atomic_write_json(state_path, payload)
 
 
 def _append_line(path: Path, line: str) -> None:
@@ -129,6 +250,41 @@ def _parse_args(argv: Optional[Sequence[str]]) -> argparse.Namespace:
         default=0,
         help="If >0, kill+restart child if it produces no stdout/stderr bytes for this many seconds.",
     )
+    p.add_argument(
+        "--watchdog-surge-s",
+        type=int,
+        default=0,
+        help="If >0, emit SURGE warnings after this many seconds with no stdout/stderr growth. Default: derived from --watchdog-no-output-s.",
+    )
+    p.add_argument(
+        "--watchdog-spill-s",
+        type=int,
+        default=0,
+        help="If >0, emit SPILL warnings after this many seconds with no stdout/stderr growth. Default: derived from --watchdog-no-output-s.",
+    )
+    p.add_argument(
+        "--watchdog-abort-after-kills",
+        type=int,
+        default=0,
+        help="If >0, abort the supervisor after this many watchdog kill events (WASHOUT). Default: 0 (never).",
+    )
+    p.add_argument(
+        "--status-path",
+        default="",
+        help="Append-only status file path. Default: bench_vault/_tmp/nightmode_status.md under repo root.",
+    )
+    p.add_argument(
+        "--log-tail-lines",
+        type=int,
+        default=200,
+        help="Number of lines to capture from child stdout/stderr when writing failure artifacts.",
+    )
+    p.add_argument(
+        "--poll-interval-s",
+        type=float,
+        default=1.0,
+        help="Supervisor polling interval for checking child status/log growth (seconds).",
+    )
     p.add_argument("--max-restarts", type=int, default=10, help="Maximum restart attempts after failures.")
     p.add_argument("--restart-backoff-s", type=float, default=5.0, help="Initial backoff between restarts (seconds).")
     p.add_argument(
@@ -178,6 +334,28 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     job_root = Path(args.job_root).expanduser() if str(args.job_root).strip() else _default_job_root(repo_root, args.job_name)
     wake_trigger = Path(args.wake_trigger).expanduser() if str(args.wake_trigger).strip() else _default_wake_trigger(repo_root)
     stop_file = _resolve_stop_file(repo_root, str(args.stop_on_file))
+    status_path = Path(args.status_path).expanduser() if str(args.status_path).strip() else _default_status_path(repo_root)
+
+    poll_s_base = float(args.poll_interval_s)
+    if poll_s_base <= 0.0:
+        poll_s_base = 1.0
+
+    tail_lines = int(args.log_tail_lines)
+    abort_after_kills = int(max(0, int(args.watchdog_abort_after_kills)))
+
+    watchdog_s = float(max(0, int(args.watchdog_no_output_s)))
+    surge_s = float(max(0, int(args.watchdog_surge_s)))
+    spill_s = float(max(0, int(args.watchdog_spill_s)))
+    if watchdog_s > 0.0:
+        if surge_s <= 0.0 or surge_s >= watchdog_s:
+            surge_s = max(1.0, watchdog_s / 3.0)
+        if spill_s <= 0.0 or spill_s >= watchdog_s:
+            spill_s = max(surge_s + 1.0, 2.0 * watchdog_s / 3.0)
+        if spill_s <= surge_s:
+            spill_s = surge_s + 1.0
+    else:
+        surge_s = 0.0
+        spill_s = 0.0
 
     _ensure_dir(job_root)
     sup_log = job_root / "supervisor.log"
@@ -185,6 +363,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     err_log = job_root / "child_stderr.log"
     state_path = job_root / "state.json"
     config_path = job_root / "job.json"
+    wd_state_path = job_root / "watchdog_state.json"
+    wd_events_path = job_root / "watchdog_events.jsonl"
+    degrade_path = job_root / "degrade_mode.json"
 
     _atomic_write_json(
         config_path,
@@ -198,6 +379,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             "wake_window_title": str(args.wake_window_title),
             "heartbeat_interval_s": int(args.heartbeat_interval_s),
             "watchdog_no_output_s": int(args.watchdog_no_output_s),
+            "watchdog_surge_s": int(args.watchdog_surge_s),
+            "watchdog_spill_s": int(args.watchdog_spill_s),
+            "watchdog_abort_after_kills": int(args.watchdog_abort_after_kills),
+            "status_path": str(args.status_path),
+            "log_tail_lines": int(args.log_tail_lines),
+            "poll_interval_s": float(args.poll_interval_s),
             "max_restarts": int(args.max_restarts),
             "restart_backoff_s": float(args.restart_backoff_s),
             "stop_on_file": str(stop_file) if stop_file else "",
@@ -210,6 +397,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     attempt = 0
     failures = 0
+    kill_count = 0
+    exit_code = 0
     last_hb = 0.0
     last_out_sz = 0
     last_err_sz = 0
@@ -218,6 +407,44 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     _append_line(sup_log, f"[{_utc_iso()}] supervisor start pid={os.getpid()} job={args.job_name!r}")
     _append_line(sup_log, f"[{_utc_iso()}] child cmd: {args.child_cmd!r}")
     _append_line(sup_log, f"[{_utc_iso()}] job_root={job_root}")
+    if watchdog_s > 0.0:
+        _append_line(
+            sup_log,
+            f"[{_utc_iso()}] watchdog clock: surge_s={surge_s:.1f} spill_s={spill_s:.1f} breach_s={watchdog_s:.1f} "
+            f"abort_after_kills={abort_after_kills} poll_s={poll_s_base:.2f} status_path={status_path}",
+        )
+        _append_line(
+            status_path,
+            f"[{_utc_iso()}] watchdog clock armed: job={args.job_name!r} job_root={job_root} "
+            f"surge_s={surge_s:.1f} spill_s={spill_s:.1f} breach_s={watchdog_s:.1f} abort_after_kills={abort_after_kills}",
+        )
+        try:
+            _write_watchdog_state(
+                wd_state_path,
+                job_root=job_root,
+                stage=WatchdogStage.OK,
+                reason="armed",
+                attempt=attempt,
+                failures=failures,
+                child_pid=0,
+                no_output_s=0.0,
+                watchdog_s=watchdog_s,
+                kill_count=kill_count,
+                degrade_level="",
+            )
+            _jsonl_append(
+                wd_events_path,
+                {
+                    "version": 1,
+                    "created_utc": _utc_iso(),
+                    "stage": WatchdogStage.OK.name,
+                    "reason": "armed",
+                    "attempt": int(attempt),
+                    "job_root": str(job_root),
+                },
+            )
+        except Exception as e:
+            _append_line(sup_log, f"[{_utc_iso()}] watchdog arm emit failed: {e!r}")
 
     while True:
         if stop_file is not None and stop_file.exists():
@@ -226,6 +453,47 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
         if failures > int(args.max_restarts):
             _append_line(sup_log, f"[{_utc_iso()}] max restarts exceeded: failures={failures} (stopping)")
+            if watchdog_s > 0.0:
+                try:
+                    _append_failure_summary(
+                        job_root,
+                        stage=WatchdogStage.WASHOUT,
+                        reason="max_restarts",
+                        attempt=attempt,
+                        child_pid=0,
+                        no_output_s=0.0,
+                        watchdog_s=watchdog_s,
+                    )
+                    _write_log_tail(job_root, out_log, err_log, tail_lines)
+                    _write_watchdog_state(
+                        wd_state_path,
+                        job_root=job_root,
+                        stage=WatchdogStage.WASHOUT,
+                        reason="max_restarts",
+                        attempt=attempt,
+                        failures=failures,
+                        child_pid=0,
+                        no_output_s=0.0,
+                        watchdog_s=watchdog_s,
+                        kill_count=kill_count,
+                        degrade_level="",
+                    )
+                    _jsonl_append(
+                        wd_events_path,
+                        {
+                            "version": 1,
+                            "created_utc": _utc_iso(),
+                            "stage": WatchdogStage.WASHOUT.name,
+                            "reason": "max_restarts",
+                            "attempt": int(attempt),
+                            "failures": int(failures),
+                            "kill_count": int(kill_count),
+                            "job_root": str(job_root),
+                        },
+                    )
+                    _append_line(status_path, f"[{_utc_iso()}] WASHOUT: max_restarts exceeded failures={failures} kill_count={kill_count}")
+                except Exception as e:
+                    _append_line(sup_log, f"[{_utc_iso()}] washout artifact write failed: {e!r}")
             # Wake the user because this needs manual attention.
             trig = WakeTrigger(
                 wake_after_s=int(args.wake_after_s),
@@ -247,6 +515,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         # Helpful breadcrumb in child logs.
         env["VRX_SUPERVISOR_JOB_ROOT"] = str(job_root)
         env["VRX_SUPERVISOR_ATTEMPT"] = str(int(attempt))
+        # If the supervisor previously entered SPILL, re-signal degrade mode on restarts.
+        if degrade_path.exists():
+            try:
+                payload = json.loads(degrade_path.read_text(encoding="utf-8"))
+                lvl = str(payload.get("level") or "").strip()
+            except Exception:
+                lvl = ""
+            if lvl:
+                env["VRX_SUPERVISOR_DEGRADE_LEVEL"] = lvl
 
         # Append-only: open in append mode.
         with out_log.open("ab") as out_f, err_log.open("ab") as err_f:
@@ -292,8 +569,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         last_out_sz = out_log.stat().st_size if out_log.exists() else 0
         last_err_sz = err_log.stat().st_size if err_log.exists() else 0
 
-        poll_s = 1.0
-        watchdog_s = float(max(0, int(args.watchdog_no_output_s)))
+        degrade_level = ""
+        stage_prev = WatchdogStage.OK
+        last_status_emit = 0.0
+        abort_job = False
+
+        poll_s = poll_s_base
         hb_s = float(max(0, int(args.heartbeat_interval_s)))
 
         while True:
@@ -319,13 +600,147 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 last_out_sz = out_sz
                 last_err_sz = err_sz
 
-            if watchdog_s > 0.0 and (time.monotonic() - last_activity) >= watchdog_s:
+            no_output_s = time.monotonic() - last_activity
+            stage_now = _compute_watchdog_stage(no_output_s, surge_s, spill_s, watchdog_s)
+
+            if stage_now != stage_prev and watchdog_s > 0.0:
+                reason = "output_resumed" if stage_now < stage_prev else "no_output"
+                ev = {
+                    "version": 1,
+                    "created_utc": _utc_iso(),
+                    "stage": stage_now.name,
+                    "reason": reason,
+                    "attempt": int(attempt),
+                    "child_pid": int(child_pid),
+                    "no_output_s": float(no_output_s),
+                    "watchdog_no_output_s": float(watchdog_s),
+                    "kill_count": int(kill_count),
+                    "job_root": str(job_root),
+                }
+                try:
+                    _jsonl_append(wd_events_path, ev)
+                    _write_watchdog_state(
+                        wd_state_path,
+                        job_root=job_root,
+                        stage=stage_now,
+                        reason=reason,
+                        attempt=attempt,
+                        failures=failures,
+                        child_pid=child_pid,
+                        no_output_s=no_output_s,
+                        watchdog_s=watchdog_s,
+                        kill_count=kill_count,
+                        degrade_level=degrade_level,
+                    )
+                    _append_line(
+                        status_path,
+                        f"[{_utc_iso()}] {stage_now.name}: no_output_s={no_output_s:.1f} attempt={attempt} pid={child_pid} job_root={job_root}",
+                    )
+                except Exception as e:
+                    _append_line(sup_log, f"[{_utc_iso()}] watchdog emit failed: {e!r}")
+
+                # SPILL: signal "degrade mode" for the *next* restart (child opt-in).
+                if stage_now == WatchdogStage.SPILL and degrade_level != "spill":
+                    degrade_level = "spill"
+                    try:
+                        _atomic_write_json(
+                            degrade_path,
+                            {
+                                "version": 1,
+                                "updated_utc": _utc_iso(),
+                                "level": degrade_level,
+                                "job_root": str(job_root),
+                            },
+                        )
+                    except Exception as e:
+                        _append_line(sup_log, f"[{_utc_iso()}] degrade_mode write failed: {e!r}")
+
+                stage_prev = stage_now
+
+            # Periodic countdown lines once we enter SURGE/SPILL (append-only eye-sore).
+            if watchdog_s > 0.0 and stage_prev >= WatchdogStage.SURGE:
+                now_m = time.monotonic()
+                if (now_m - last_status_emit) >= max(5.0, poll_s):
+                    last_status_emit = now_m
+                    if stage_prev == WatchdogStage.SURGE:
+                        next_name = "SPILL"
+                        next_in = max(0.0, spill_s - no_output_s)
+                    elif stage_prev == WatchdogStage.SPILL:
+                        next_name = "BREACH"
+                        next_in = max(0.0, watchdog_s - no_output_s)
+                    else:
+                        next_name = ""
+                        next_in = 0.0
+                    _append_line(
+                        status_path,
+                        f"[{_utc_iso()}] clock: stage={stage_prev.name} no_output_s={no_output_s:.1f} next={next_name} in {next_in:.1f}s attempt={attempt} pid={child_pid}",
+                    )
+
+            # BREACH: kill+restart (legacy watchdog). Optionally abort after N kills (WASHOUT).
+            if watchdog_s > 0.0 and stage_now == WatchdogStage.BREACH:
                 _append_line(
                     sup_log,
                     f"[{_utc_iso()}] watchdog: no output for {watchdog_s:.1f}s; killing child pid={child_pid}",
                 )
+                try:
+                    _append_failure_summary(
+                        job_root,
+                        stage=WatchdogStage.BREACH,
+                        reason="no_output",
+                        attempt=attempt,
+                        child_pid=child_pid,
+                        no_output_s=no_output_s,
+                        watchdog_s=watchdog_s,
+                    )
+                    _write_log_tail(job_root, out_log, err_log, tail_lines)
+                except Exception as e:
+                    _append_line(sup_log, f"[{_utc_iso()}] failure artifact write failed: {e!r}")
+
+                kill_count += 1
+                if abort_after_kills > 0 and kill_count >= abort_after_kills:
+                    abort_job = True
+                    try:
+                        _append_failure_summary(
+                            job_root,
+                            stage=WatchdogStage.WASHOUT,
+                            reason="abort_after_kills",
+                            attempt=attempt,
+                            child_pid=child_pid,
+                            no_output_s=no_output_s,
+                            watchdog_s=watchdog_s,
+                        )
+                        _write_watchdog_state(
+                            wd_state_path,
+                            job_root=job_root,
+                            stage=WatchdogStage.WASHOUT,
+                            reason="abort_after_kills",
+                            attempt=attempt,
+                            failures=failures,
+                            child_pid=child_pid,
+                            no_output_s=no_output_s,
+                            watchdog_s=watchdog_s,
+                            kill_count=kill_count,
+                            degrade_level=degrade_level,
+                        )
+                        _jsonl_append(
+                            wd_events_path,
+                            {
+                                "version": 1,
+                                "created_utc": _utc_iso(),
+                                "stage": WatchdogStage.WASHOUT.name,
+                                "reason": "abort_after_kills",
+                                "attempt": int(attempt),
+                                "child_pid": int(child_pid),
+                                "no_output_s": float(no_output_s),
+                                "watchdog_no_output_s": float(watchdog_s),
+                                "kill_count": int(kill_count),
+                                "job_root": str(job_root),
+                            },
+                        )
+                    except Exception:
+                        pass
+                    _append_line(status_path, f"[{_utc_iso()}] WASHOUT: abort_after_kills={abort_after_kills} (aborting)")
                 _kill_pid_tree(child_pid)
-                # Give the process a moment to exit.
                 time.sleep(0.5)
                 break
 
@@ -378,6 +793,23 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             },
         )
 
+        if abort_job:
+            exit_code = 3
+            _append_line(sup_log, f"[{_utc_iso()}] WASHOUT: aborting supervisor after watchdog kill (kill_count={kill_count})")
+            if not wake_trigger.exists():
+                trig = WakeTrigger(
+                    wake_after_s=int(args.wake_after_s),
+                    memo=f"[vraxion_lab_supervisor] WASHOUT: watchdog abort (kill_count={kill_count}). job_root={job_root}",
+                    reason="washout",
+                    job_root=str(job_root),
+                    attempt=int(attempt),
+                    pid=int(os.getpid()),
+                    window_title=str(args.wake_window_title),
+                )
+                _atomic_write_json(wake_trigger, trig.to_json())
+                _append_line(sup_log, f"[{_utc_iso()}] wrote washout wake trigger: {wake_trigger}")
+            break
+
         if rc == 0 and bool(args.stop_on_success):
             trig = WakeTrigger(
                 wake_after_s=int(args.wake_after_s),
@@ -417,9 +849,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         time.sleep(backoff)
 
     _append_line(sup_log, f"[{_utc_iso()}] supervisor exit job_root={job_root}")
-    return 0
+    return int(exit_code)
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
