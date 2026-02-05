@@ -220,6 +220,16 @@ def _parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     p.add_argument("--amp", required=True, type=int, choices=(0, 1))
     p.add_argument("--output-dir", required=True, help="Output directory for artifacts.")
 
+    # Debug-only watchdog self-test knobs (default: disabled).
+    p.add_argument("--debug-stall-after-step", type=int, default=-1, help="Inject a stall after this measured step. -1 disables.")
+    p.add_argument("--debug-stall-s", type=float, default=0.0, help="Seconds to sleep when debug stall triggers.")
+    p.add_argument(
+        "--debug-stall-threshold-s",
+        type=float,
+        default=0.0,
+        help="Override heartbeat stall threshold for debug self-test (seconds). 0 uses contract threshold.",
+    )
+
     return p.parse_args(list(argv) if argv is not None else None)
 
 
@@ -306,6 +316,21 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             raise ValueError("--warmup-steps must be >= 0")
         if int(args.measure_steps) < 1:
             raise ValueError("--measure-steps must be >= 1")
+        if float(args.debug_stall_s) < 0.0:
+            raise ValueError("--debug-stall-s must be >= 0")
+        if float(args.debug_stall_threshold_s) < 0.0:
+            raise ValueError("--debug-stall-threshold-s must be >= 0")
+        if int(args.debug_stall_after_step) >= 0:
+            if float(args.debug_stall_s) <= 0.0:
+                raise ValueError("--debug-stall-after-step requires --debug-stall-s > 0")
+            if float(args.debug_stall_threshold_s) <= 0.0:
+                raise ValueError("--debug-stall-after-step requires --debug-stall-threshold-s > 0")
+            if int(args.debug_stall_after_step) >= int(args.measure_steps):
+                raise ValueError("--debug-stall-after-step must be < --measure-steps")
+        else:
+            # Avoid ambiguous debug settings (threshold override without an injected stall).
+            if float(args.debug_stall_s) > 0.0 or float(args.debug_stall_threshold_s) > 0.0:
+                raise ValueError("--debug-stall-s/--debug-stall-threshold-s require --debug-stall-after-step >= 0")
     except Exception as exc:
         print(f"ERROR: invalid args: {exc}", file=sys.stderr)
         return 2
@@ -349,6 +374,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return 2
 
     probe_id = f"{wl_id}__E{int(args.out_dim)}__{args.precision}_amp{int(args.amp)}"
+    debug_self_test = int(args.debug_stall_after_step) >= 0
 
     # Write pre-run artifacts (must happen before any compute).
     try:
@@ -368,6 +394,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 "out_dim is not part of workload_schema_v1; do not compare across out_dim without probe_id.",
             ],
         }
+        if debug_self_test:
+            cmd_text["notes"].append(
+                "DEBUG: watchdog self-test enabled "
+                f"(stall_after_step={int(args.debug_stall_after_step)}, "
+                f"stall_s={float(args.debug_stall_s)}, "
+                f"stall_threshold_s={float(args.debug_stall_threshold_s)}). "
+                "Not a rankable datapoint."
+            )
         _atomic_write_text(out_dir / ART_RUN_CMD, json.dumps(cmd_text, ensure_ascii=True, sort_keys=True, indent=2) + "\n")
         env_path = gpu_env_dump.write_env_json(out_dir=out_dir, precision=args.precision, amp=int(args.amp))
         env_obj = json.loads(env_path.read_text(encoding="utf-8"))
@@ -410,6 +444,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "heartbeat_last_progress_age_s": None,
         "step_time_mode": None,
         "runtime_exception_msg": None,
+        "debug_stall_after_step": int(args.debug_stall_after_step),
+        "debug_stall_s": float(args.debug_stall_s),
+        "debug_stall_threshold_s": float(args.debug_stall_threshold_s),
     }
 
     write_lock = threading.Lock()
@@ -448,6 +485,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 f"- fail_reasons: {reasons_str}\n\n"
                 f"Contract: {CONTRACT_REPO_PATH}\n"
             )
+            if debug_self_test:
+                summ += (
+                    "\nNOTE: debug watchdog self-test enabled "
+                    f"(stall_after_step={int(args.debug_stall_after_step)}, "
+                    f"stall_s={float(args.debug_stall_s)}, "
+                    f"stall_threshold_s={float(args.debug_stall_threshold_s)}).\n"
+                )
             _atomic_write_text(out_dir / ART_SUMMARY, summ)
             wrote_post = True
 
@@ -598,7 +642,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         # Warmup.
         warm_durs = step_times_s_warmup()
         warm_med = float(sorted(warm_durs)[len(warm_durs) // 2]) if warm_durs else 0.1
-        hb.arm(stall_threshold_s=compute_stall_threshold_s(warm_med))
+        stall_thresh_s = compute_stall_threshold_s(warm_med)
+        if debug_self_test and float(args.debug_stall_threshold_s) > 0.0:
+            stall_thresh_s = float(args.debug_stall_threshold_s)
+        hb.arm(stall_threshold_s=stall_thresh_s)
         metrics["heartbeat_stall_threshold_s"] = float(hb.stall_threshold_s)
 
         if use_cuda:
@@ -630,6 +677,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
             hb.update_progress()
 
+            if debug_self_test and i == int(args.debug_stall_after_step):
+                time.sleep(float(args.debug_stall_s))
+
             if not torch.isfinite(loss):
                 if torch.isnan(loss):
                     metrics["had_nan"] = True
@@ -641,7 +691,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 break
 
             # Update stall threshold once we have some measured durations.
-            if i == 4:
+            if i == 4 and not debug_self_test:
                 if use_cuda:
                     # will be computed after sync; leave warm threshold.
                     pass

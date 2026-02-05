@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -187,7 +190,64 @@ class TestGpuCapacityProbe(unittest.TestCase):
         self.assertEqual(gpu_capacity_probe.compute_stall_threshold_s(6.0), 60.0)
         self.assertEqual(gpu_capacity_probe.compute_stall_threshold_s(7.0), 70.0)
 
+    def test_forced_stall_writes_artifacts_quickly(self) -> None:
+        ant = {"ring_len": 32, "slot_dim": 16, "ptr_dtype": "fp32", "precision": "fp32"}
+        col = {"seq_len": 8, "synth_len": 8, "batch_size": 2, "ptr_update_every": 1, "state_loop_samples": 0}
+
+        repo_root = Path(__file__).resolve().parents[2]
+        script = repo_root / "Golden Draft" / "tools" / "gpu_capacity_probe.py"
+
+        with tempfile.TemporaryDirectory() as td:
+            out_dir = Path(td) / "stall"
+            env = dict(os.environ)
+            env["VRX_FORCE_DEVICE"] = "cpu"
+
+            cmd = [
+                sys.executable,
+                str(script),
+                "--ant",
+                json.dumps(ant),
+                "--colony",
+                json.dumps(col),
+                "--out-dim",
+                "1",
+                "--batch",
+                "2",
+                "--warmup-steps",
+                "1",
+                "--measure-steps",
+                "100",
+                "--precision",
+                "fp32",
+                "--amp",
+                "0",
+                "--debug-stall-threshold-s",
+                "1.0",
+                "--debug-stall-after-step",
+                "0",
+                "--debug-stall-s",
+                "2.0",
+                "--output-dir",
+                str(out_dir),
+            ]
+
+            proc = subprocess.run(cmd, cwd=str(repo_root), env=env, capture_output=True, text=True, timeout=20)
+            self.assertEqual(proc.returncode, 0, msg=f"stdout:\n{proc.stdout}\n\nstderr:\n{proc.stderr}")
+
+            for name in (
+                gpu_capacity_probe.ART_RUN_CMD,
+                gpu_capacity_probe.ART_ENV,
+                gpu_capacity_probe.ART_METRICS_JSON,
+                gpu_capacity_probe.ART_METRICS_CSV,
+                gpu_capacity_probe.ART_SUMMARY,
+            ):
+                self.assertTrue((out_dir / name).exists(), msg=f"missing artifact: {name}")
+
+            metrics = json.loads((out_dir / gpu_capacity_probe.ART_METRICS_JSON).read_text(encoding="utf-8"))
+            self.assertTrue(metrics.get("heartbeat_stall_detected"))
+            self.assertIn("heartbeat_stall", metrics.get("fail_reasons", []))
+            self.assertEqual(metrics.get("debug_stall_after_step"), 0)
+
 
 if __name__ == "__main__":
     unittest.main()
-
