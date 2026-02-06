@@ -585,15 +585,21 @@ def _has_merged_pr(urls: Sequence[str]) -> bool:
     return False
 
 
-def _ensure_projects(owner: str) -> tuple[dict[str, Any], dict[str, Any]]:
+def _ensure_projects(owner: str) -> dict[str, Any]:
     priv = _project_by_title(owner, PRIVATE_ARCHIVE_TITLE)
-    pub = _project_by_title(owner, PUBLIC_ROADMAP_TITLE)
     # Best-effort visibility check (field name differs by gh version; treat missing as "unknown").
     if priv.get("visibility") not in (None, "", "PRIVATE"):
         raise SyncError(f"Expected private archive project to be PRIVATE; got {priv.get('visibility')!r}")
-    if pub.get("visibility") not in (None, "", "PUBLIC"):
-        raise SyncError(f"Expected public roadmap project to be PUBLIC; got {pub.get('visibility')!r}")
-    return priv, pub
+
+    # NOTE: The public roadmap project is intentionally NOT required by this tool.
+    # - `sync` mirrors Linear tickets into the private archive only.
+    # - `prune-pr-items` and `promote` operate on the private archive + (optionally) a public issue,
+    #   but do not require a GitHub Projects "roadmap" project to exist under the same owner.
+    #
+    # This matters after repo ownership transfers where:
+    # - private archive stays under a user, but
+    # - public roadmap moves to an org (or vice versa).
+    return priv
 
 
 def _ensure_gh_projects_commands() -> None:
