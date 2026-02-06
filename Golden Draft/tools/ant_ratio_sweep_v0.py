@@ -190,6 +190,7 @@ def _run_capability_train(
             "VAR_PROJECT_ROOT": str(run_root),
             "VAR_LOGGING_PATH": str(log_path),
             "VAR_COMPUTE_DEVICE": str(device),
+            "VRX_MODE": "train",
             "VRX_PRECISION": str(precision),
             "VRX_PTR_DTYPE": str(ptr_dtype),
             "VAR_RUN_SEED": str(int(seed)),
@@ -211,6 +212,10 @@ def _run_capability_train(
             "VRX_MAX_SAMPLES": str(int(max_samples)),
             "VRX_EVAL_SAMPLES": str(int(eval_samples)),
             "VRX_MAX_STEPS": str(int(steps)),
+            # The modern runner path is phase-driven; set both phase and max caps
+            # so capability loops remain bounded and deterministic.
+            "VRX_PHASE_A_STEPS": str(int(steps)),
+            "VRX_PHASE_B_STEPS": "0",
             # Saving
             "VRX_RESUME": "0",
             "VRX_CKPT": str(ckpt_path),
