@@ -10,7 +10,7 @@ This repo root contains two curated targets:
 
 ## Status
 
-Research preview. Chapter #1 work (GPU limiter / probe harness / VRAM accounting) is active, so expect iteration and occasional breaking changes.
+Research preview. Expect iteration and occasional breaking changes. Current status lives in the Roadmap and Releases.
 
 ## Where to look
 

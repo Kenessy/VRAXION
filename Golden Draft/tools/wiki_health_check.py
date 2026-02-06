@@ -330,6 +330,7 @@ def main(argv: list[str]) -> int:
     banned = [
         "github.com/Kenessy/VRAXION",
         "kenessy.github.io/VRAXION",
+        "github.com/users/Kenessy/projects/4",
     ]
 
     started = time.time()

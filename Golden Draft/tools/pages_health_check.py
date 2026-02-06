@@ -22,6 +22,8 @@ from urllib.parse import urlparse
 EXPECTED_PAGES_BASE = "https://vraxion.github.io/VRAXION/"
 BANNED_SUBSTRINGS = [
     "kenessy.github.io/VRAXION",
+    "github.com/Kenessy/VRAXION",
+    "github.com/users/Kenessy/projects/4",
 ]
 
 
@@ -183,4 +185,3 @@ def main(argv: list[str]) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main(sys.argv[1:]))
-
