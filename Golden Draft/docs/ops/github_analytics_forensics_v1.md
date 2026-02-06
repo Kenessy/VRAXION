@@ -2,6 +2,7 @@
 
 Generated: 2026-02-04 (UTC)
 Repo: `Kenessy/VRAXION` (public)
+Repo (current): `VRAXION/VRAXION`
 Data window: GitHub "Traffic" API (last ~14 days only; daily aggregates)
 
 ## Executive Summary
@@ -86,7 +87,7 @@ Top referrers (web):
 - `Google` (1)
 
 Top paths:
-- repo root `/Kenessy/VRAXION` dominates
+- repo root `/VRAXION/VRAXION` dominates
 - a few doc/code paths (README, DEFENSIVE_PUBLICATION, discussions, etc.)
 
 ### Interpretation
@@ -159,16 +160,15 @@ Create a small script + scheduler:
 These are the exact endpoints used:
 
 ```bash
-gh api repos/Kenessy/VRAXION
+gh api repos/VRAXION/VRAXION
 
-gh api repos/Kenessy/VRAXION/traffic/views
-gh api repos/Kenessy/VRAXION/traffic/clones
-gh api repos/Kenessy/VRAXION/traffic/popular/referrers
-gh api repos/Kenessy/VRAXION/traffic/popular/paths
+gh api repos/VRAXION/VRAXION/traffic/views
+gh api repos/VRAXION/VRAXION/traffic/clones
+gh api repos/VRAXION/VRAXION/traffic/popular/referrers
+gh api repos/VRAXION/VRAXION/traffic/popular/paths
 
-gh api repos/Kenessy/VRAXION/releases --paginate
+gh api repos/VRAXION/VRAXION/releases --paginate
 
-gh api repos/Kenessy/VRAXION/actions/workflows
-gh api repos/Kenessy/VRAXION/actions/runs?per_page=100
+gh api repos/VRAXION/VRAXION/actions/workflows
+gh api repos/VRAXION/VRAXION/actions/runs?per_page=100
 ```
-

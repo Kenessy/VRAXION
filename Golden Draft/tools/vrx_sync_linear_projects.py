@@ -41,6 +41,7 @@ PUBLIC_UPDATE_BEGIN = "<!-- VRX_PUBLIC_UPDATE BEGIN -->"
 PUBLIC_UPDATE_END = "<!-- VRX_PUBLIC_UPDATE END -->"
 
 DEFAULT_OWNER = "Kenessy"
+DEFAULT_REPO = "VRAXION/VRAXION"
 DEFAULT_TEAM_NAME = "VRAXION"
 DEFAULT_PROJECTS = ("VRAXION_WALL", "VRAXION_IDEAS")
 
@@ -575,11 +576,10 @@ def _linear_to_lifecycle(linear_state: str) -> Optional[str]:
 def _has_merged_pr(urls: Sequence[str]) -> bool:
     # Best-effort: if any PR URL is merged, treat as merged evidence.
     for u in urls:
-        m = re.search(r"/pull/(\d+)$", u)
-        if not m:
+        if "/pull/" not in u:
             continue
-        prn = m.group(1)
-        p = _run(["gh", "pr", "view", prn, "-R", f"{DEFAULT_OWNER}/VRAXION", "--json", "state", "--jq", ".state"])
+        # Use the URL directly so repo moves/redirects do not break the check.
+        p = _run(["gh", "pr", "view", u, "--json", "state", "--jq", ".state"])
         if p.returncode == 0 and p.stdout.strip() == "MERGED":
             return True
     return False
@@ -1154,7 +1154,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     pr = sub.add_parser("promote", help="Curated public update helper (explicit only).")
     pr.add_argument("--owner", default=DEFAULT_OWNER)
-    pr.add_argument("--repo", default=f"{DEFAULT_OWNER}/VRAXION")
+    pr.add_argument("--repo", default=DEFAULT_REPO)
     pr.add_argument("--apply", action="store_true", help="Apply changes (default is dry-run)")
     pr.add_argument("--public-update-issue", required=True, help="Public update issue number (in --repo)")
     pr.add_argument("--linear-keys", required=True, help="Comma-separated Linear keys to include")

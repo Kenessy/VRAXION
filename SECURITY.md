@@ -7,7 +7,7 @@ VRAXION is a research repository. Security is still taken seriously, but expecta
 If you believe you have found a security vulnerability:
 
 1) Prefer a private report via GitHub Security Advisories:
-   https://github.com/Kenessy/VRAXION/security/advisories/new
+   https://github.com/VRAXION/VRAXION/security/advisories/new
 2) If you cannot use advisories, open a GitHub Discussion and clearly mark it as a security concern.
 
 Please include:

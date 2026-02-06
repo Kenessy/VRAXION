@@ -12,7 +12,7 @@ This runbook describes the intended **checkpoint-time refinement loop** for VRAX
 - Address refinement must be **arc-safe** by default (contiguous arc; parent-owned addresses only).
 
 ## Prereqs
-- Repo root: `Kenessy/VRAXION`
+- Repo root: `VRAXION/VRAXION`
 - Tools:
   - Meta generator: `Golden Draft/tools/mitosis_meta_from_eval.py`
   - Offline split: `Golden Draft/vraxion_mitosis_split.py`
@@ -79,4 +79,3 @@ These are the “signals of life” for the refinement loop:
 ## Notes / future work
 - **1→2 growth** from `head.single.*` checkpoints is not supported by the current offline split tool.
   - Future ticket: add a compatibility transform to treat `head.single.*` as expert 0 and materialize expert shards for 1→2.
-

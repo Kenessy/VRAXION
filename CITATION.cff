@@ -1,13 +1,13 @@
 cff-version: 1.2.0
 message: "If you use this software, please cite it as below."
-title: "PRIME C-19 - Phase-Recurring Infinite Manifold Engine (Project David)"
-version: "v0.5.3"
-date-released: "2026-01-19"
+title: "VRAXION"
+version: "2.10.578"
+date-released: "2026-02-06"
 type: software
 authors:
   - family-names: Kenessy
     given-names: Daniel
-repository-code: "https://github.com/Kenessy/PRIME-C-19"
+repository-code: "https://github.com/VRAXION/VRAXION"
 keywords:
   - ai
   - manifold

@@ -4,7 +4,7 @@
   const $ = (sel) => document.querySelector(sel);
   const $$ = (sel) => document.querySelectorAll(sel);
 
-  const REPO_URL = 'https://github.com/Kenessy/VRAXION';
+  const REPO_URL = 'https://github.com/VRAXION/VRAXION';
 
   // --- RESPONSIVE CRT SCALE ---
   // The UI is authored at a fixed 640x360 "signal" resolution.
