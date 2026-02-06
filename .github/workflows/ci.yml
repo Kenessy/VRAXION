@@ -48,3 +48,18 @@ jobs:
       - name: Wiki health check
         run: |
           python "Golden Draft/tools/wiki_health_check.py"
+
+  docs-health:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Pages health check
+        run: |
+          python "Golden Draft/tools/pages_health_check.py"

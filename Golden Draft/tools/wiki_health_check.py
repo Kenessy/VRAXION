@@ -6,6 +6,7 @@ Checks the GitHub Wiki for:
 - banned legacy links (Kenessy repo/pages)
 - embedded SVG URL validity (HTTP 200) and raw.githubusercontent.com usage
 - broken internal [[Page]] links (must resolve to an existing *.md file)
+- milestone SVG drift (time-sensitive "active status" phrases inside the phases diagram)
 
 Stdlib-only by design (runs in CI without extra deps).
 """
@@ -179,6 +180,42 @@ def _http_check(url: str, *, timeout_s: float) -> tuple[bool, str]:
         return False, f"get_exc:{type(e).__name__} ({head_err})"
 
 
+MILESTONE_SVG_RAW_URL = "https://raw.githubusercontent.com/VRAXION/VRAXION/main/docs/assets/vraxion_phases.svg"
+MILESTONE_SVG_BANNED_PHRASES = [
+    "System status",
+    "Active milestone",
+    "Active focus",
+]
+
+
+def _fetch_text_with_retries(
+    url: str,
+    *,
+    timeout_s: float,
+    retries: int = 2,
+    sleep_s: float = 0.6,
+) -> tuple[str | None, str]:
+    headers = {"User-Agent": "VRAXION wiki_health_check/1.0"}
+    last_err = ""
+    for attempt in range(retries + 1):
+        try:
+            req = urllib.request.Request(url, method="GET", headers=headers)
+            with urllib.request.urlopen(req, timeout=timeout_s) as resp:
+                status = getattr(resp, "status", None) or resp.getcode()
+                if status not in (200, 206):
+                    return None, f"bad_status:{status}"
+                data = resp.read()
+            return data.decode("utf-8", errors="replace"), "ok"
+        except urllib.error.HTTPError as e:
+            last_err = f"http_error:{e.code}"
+        except Exception as e:  # noqa: BLE001 - keep error string short
+            last_err = f"get_exc:{type(e).__name__}"
+
+        if attempt < retries:
+            time.sleep(sleep_s * (attempt + 1))
+    return None, last_err
+
+
 WIKILINK_RE = re.compile(r"\[\[([^\]]+)\]\]")
 
 
@@ -322,6 +359,30 @@ def main(argv: list[str]) -> int:
                 if not ok:
                     svg_failures.append(f"{info}: {url}")
 
+        milestone_svg_violations: list[str] = []
+        milestone_source = ""
+        milestone_text: str | None = None
+
+        # Prefer scanning the locally checked-out asset so PRs gate correctly and deterministically.
+        milestone_local = Path(__file__).resolve().parents[2] / "docs" / "assets" / "vraxion_phases.svg"
+        if milestone_local.exists():
+            milestone_source = str(milestone_local)
+            milestone_text = milestone_local.read_text(encoding="utf-8", errors="replace")
+        else:
+            milestone_source = MILESTONE_SVG_RAW_URL
+            milestone_text, milestone_info = _fetch_text_with_retries(
+                MILESTONE_SVG_RAW_URL,
+                timeout_s=args.timeout_sec,
+                retries=2,
+            )
+            if milestone_text is None:
+                milestone_svg_violations.append(f"{milestone_info}: {MILESTONE_SVG_RAW_URL}")
+
+        if milestone_text is not None:
+            for phrase in MILESTONE_SVG_BANNED_PHRASES:
+                if phrase in milestone_text:
+                    milestone_svg_violations.append(f'{milestone_source}: phrase_found:"{phrase}"')
+
         missing_wikilinks = _check_wikilinks(wiki_root, md_files)
 
     elapsed = time.time() - started
@@ -351,11 +412,18 @@ def main(argv: list[str]) -> int:
         for s in svg_failures:
             print(f"- {s}")
 
+    if milestone_svg_violations:
+        ok = False
+        print("\nMILESTONE SVG DRIFT VIOLATIONS:")
+        for v in milestone_svg_violations:
+            print(f"- {v}")
+
     print("\nSUMMARY:")
     print(f"- markdown_files: {len(md_files)}")
     print(f"- banned_findings: {len(findings)}")
     print(f"- home_lock_violations: {len(home_findings)}")
     print(f"- svg_urls: {len(svg_urls)} (failures: {len(svg_failures)})")
+    print(f"- milestone_svg_drift_violations: {len(milestone_svg_violations)}")
     print(f"- broken_wikilinks: {len(missing_wikilinks)}")
     print(f"- elapsed_s: {elapsed:.2f}")
 

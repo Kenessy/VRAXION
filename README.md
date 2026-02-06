@@ -14,7 +14,7 @@ Research preview. Chapter #1 work (GPU limiter / probe harness / VRAM accounting
 
 ## Where to look
 
-- Pages (landing): https://kenessy.github.io/VRAXION/
+- Pages (landing): https://vraxion.github.io/VRAXION/
 - Wiki (deep dives): https://github.com/VRAXION/VRAXION/wiki
 - Quickstart (local dev): `Golden Draft/docs/ops/quickstart_v1.md`
 - Reproducibility checklist: `Golden Draft/docs/ops/reproducibility_v1.md`

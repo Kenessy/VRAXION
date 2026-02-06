@@ -5,10 +5,9 @@
 
   <title id="vpm7_title">VRAXION · Engineering Milestones</title>
   <desc id="vpm7_desc">
-    Columnar roadmap (01–07) for VRAXION on a GitHub-dark background. A compact status bar sits at the top
-    of the roadmap (Complete / In progress / Planned) and is visually encoded per column (cyan = complete,
-    magenta = in progress, neutral gray = planned with increasing uncertainty). Active focus is Chapter #1 GPU
-    guardrails + reproducibility (contracts → workload IDs → probe artifacts → VRAM budgets).
+    Directional phase map (01–07) for VRAXION on a GitHub-dark background. This is a timeless map.
+    The top row encodes relative time horizon / certainty (brighter = more specified; dimmer = more exploratory).
+    Current status lives on the Roadmap board (not inside this SVG).
   </desc>
 
   <!--
@@ -109,18 +108,10 @@
   <text x="28" y="64"
         font-family="'Segoe UI', system-ui, -apple-system, sans-serif"
         font-size="12.8" fill="#6B7280">
-    System status: Chapter #1 (GPU guardrails + reproducibility) · Active milestone: 03
+    Directional phase map (current status lives on the Roadmap board)
   </text>
 
-  <!-- Top-right callout (bold + readable on dark bg) -->
-  <text x="1172" y="64" text-anchor="end"
-        font-family="'Segoe UI', system-ui, -apple-system, sans-serif"
-        font-size="13.6" font-weight="950"
-        fill="#FF00FF" opacity="0.96"
-        stroke="#0d1117" stroke-width="3" paint-order="stroke"
-        filter="url(#vpm7_glow_magenta)">
-    03 · GPU CH1 (GUARDRAILS)
-  </text>
+  <!-- Intentionally no "active milestone" callout; status lives elsewhere. -->
 
   <line x1="28" y1="78" x2="1172" y2="78" stroke="#1A2130" stroke-width="1" stroke-dasharray="4 6"/>
 
@@ -134,21 +125,18 @@
 
     <!-- Per-column status tint -->
     <g clip-path="url(#vpm7_bar_clip)">
-      <rect x="0"   y="0" width="166" height="30" fill="url(#vpm7_bar_complete)"/>
-      <rect x="166" y="0" width="166" height="30" fill="url(#vpm7_bar_complete)"/>
-      <rect x="332" y="0" width="166" height="30" fill="url(#vpm7_bar_inprogress)"/>
-      <rect x="498" y="0" width="166" height="30" fill="url(#vpm7_bar_planned_1)"/>
-      <rect x="664" y="0" width="166" height="30" fill="url(#vpm7_bar_planned_2)"/>
+      <rect x="0"   y="0" width="166" height="30" fill="url(#vpm7_bar_planned_1)"/>
+      <rect x="166" y="0" width="166" height="30" fill="url(#vpm7_bar_planned_1)"/>
+      <rect x="332" y="0" width="166" height="30" fill="url(#vpm7_bar_planned_2)"/>
+      <rect x="498" y="0" width="166" height="30" fill="url(#vpm7_bar_planned_2)"/>
+      <rect x="664" y="0" width="166" height="30" fill="url(#vpm7_bar_planned_3)"/>
       <rect x="830" y="0" width="166" height="30" fill="url(#vpm7_bar_planned_3)"/>
       <rect x="996" y="0" width="164" height="30" fill="url(#vpm7_bar_planned_4)"/>
     </g>
 
     <line x1="0" y1="30" x2="1160" y2="30" stroke="#1A2130"/>
 
-    <!-- Active column fade (content region only) -->
-    <rect x="332" y="30" width="166" height="140" fill="url(#vpm7_active_fade)" opacity="0.95">
-      <animate attributeName="opacity" values="0.95;0.80;0.95" dur="7.8s" repeatCount="indefinite"/>
-    </rect>
+    <!-- No live-status highlight; map is directional. -->
 
     <!-- BOTTOM PHASE-TYPE ROW -->
     <rect x="0" y="170" width="1160" height="30" rx="14" fill="url(#vpm7_bottom_fill)" opacity="0.92"/>
@@ -165,46 +153,37 @@
       <line x1="996" y1="10" x2="996" y2="190"/>
     </g>
 
-    <!-- STATUS BAR CONTENT -->
+    <!-- TOP ROW: milestone IDs (not status) -->
     <g transform="translate(0,0)">
       <g transform="translate(16,15)">
-        <circle r="8.5" fill="#00F0FF" opacity="0.10" stroke="#00F0FF" stroke-opacity="0.50"/>
-        <path d="M -4 0.5 L -1.5 3.5 L 5 -3"
-              fill="none" stroke="#00F0FF" stroke-width="2.2"
-              stroke-linecap="round" stroke-linejoin="round"
-              filter="url(#vpm7_glow_cyan)"/>
+        <circle r="8.5" fill="none" stroke="#A0AEC0" stroke-opacity="0.55"/>
+        <circle r="2.2" fill="#A0AEC0" opacity="0.30"/>
       </g>
       <text x="34" y="20" font-family="'Segoe UI', system-ui, -apple-system, sans-serif"
-            font-size="10.6" font-weight="900" fill="#00F0FF" opacity="0.90">
-        COMPLETE
+            font-size="10.6" font-weight="900" fill="#A0AEC0" opacity="0.78">
+        01
       </text>
     </g>
 
     <g transform="translate(166,0)">
       <g transform="translate(16,15)">
-        <circle r="8.5" fill="#00F0FF" opacity="0.10" stroke="#00F0FF" stroke-opacity="0.50"/>
-        <path d="M -4 0.5 L -1.5 3.5 L 5 -3"
-              fill="none" stroke="#00F0FF" stroke-width="2.2"
-              stroke-linecap="round" stroke-linejoin="round"
-              filter="url(#vpm7_glow_cyan)"/>
+        <circle r="8.5" fill="none" stroke="#A0AEC0" stroke-opacity="0.55"/>
+        <circle r="2.2" fill="#A0AEC0" opacity="0.30"/>
       </g>
       <text x="34" y="20" font-family="'Segoe UI', system-ui, -apple-system, sans-serif"
-            font-size="10.6" font-weight="900" fill="#00F0FF" opacity="0.90">
-        COMPLETE
+            font-size="10.6" font-weight="900" fill="#A0AEC0" opacity="0.78">
+        02
       </text>
     </g>
 
     <g transform="translate(332,0)">
       <g transform="translate(16,15)">
-        <circle r="8.5" fill="#FF00FF" opacity="0.10" stroke="#FF00FF" stroke-opacity="0.55"/>
-        <circle r="4.0" fill="#FF00FF" opacity="0.95" filter="url(#vpm7_glow_magenta)">
-          <animate attributeName="opacity" values="1;0.35;1" dur="1.8s" repeatCount="indefinite"/>
-          <animate attributeName="r" values="4.0;5.1;4.0" dur="1.8s" repeatCount="indefinite"/>
-        </circle>
+        <circle r="8.5" fill="none" stroke="#A0AEC0" stroke-opacity="0.55"/>
+        <circle r="2.2" fill="#A0AEC0" opacity="0.30"/>
       </g>
       <text x="34" y="20" font-family="'Segoe UI', system-ui, -apple-system, sans-serif"
-            font-size="10.6" font-weight="900" fill="#FF00FF" opacity="0.94">
-        IN PROGRESS
+            font-size="10.6" font-weight="900" fill="#A0AEC0" opacity="0.78">
+        03
       </text>
     </g>
 
@@ -215,7 +194,7 @@
       </g>
       <text x="34" y="20" font-family="'Segoe UI', system-ui, -apple-system, sans-serif"
             font-size="10.6" font-weight="900" fill="#A0AEC0" opacity="0.78">
-        PLANNED
+        04
       </text>
     </g>
 
@@ -226,7 +205,7 @@
       </g>
       <text x="34" y="20" font-family="'Segoe UI', system-ui, -apple-system, sans-serif"
             font-size="10.6" font-weight="900" fill="#A0AEC0" opacity="0.74">
-        PLANNED
+        05
       </text>
     </g>
 
@@ -237,7 +216,7 @@
       </g>
       <text x="34" y="20" font-family="'Segoe UI', system-ui, -apple-system, sans-serif"
             font-size="10.6" font-weight="900" fill="#A0AEC0" opacity="0.70">
-        PLANNED
+        06
       </text>
     </g>
 
@@ -248,7 +227,7 @@
       </g>
       <text x="34" y="20" font-family="'Segoe UI', system-ui, -apple-system, sans-serif"
             font-size="10.6" font-weight="900" fill="#A0AEC0" opacity="0.66">
-        PLANNED
+        07
       </text>
     </g>
 
@@ -295,24 +274,24 @@
       </text>
     </g>
 
-    <!-- Column 03 (active) -->
+    <!-- Column 03 -->
     <g transform="translate(332,0)">
       <text x="16" y="62" font-family="'Segoe UI', system-ui, -apple-system, sans-serif"
-            font-size="14.2" font-weight="950" fill="#FFFFFF">
+            font-size="14.2" font-weight="950" fill="#E2E8F0" opacity="0.95">
         GPU CH1
       </text>
 
       <text x="16" y="92" font-family="'Segoe UI', system-ui, -apple-system, sans-serif"
-            font-size="11.8" fill="#E2E8F0" opacity="0.96">
-        • <tspan font-weight="900" fill="#FFFFFF">Env lock</tspan><tspan> + contract</tspan>
+            font-size="11.8" fill="#A0AEC0" opacity="0.86">
+        • <tspan font-weight="900" fill="#E2E8F0">Env lock</tspan><tspan> + contract</tspan>
       </text>
       <text x="16" y="108" font-family="'Segoe UI', system-ui, -apple-system, sans-serif"
-            font-size="11.8" fill="#E2E8F0" opacity="0.96">
-        • <tspan font-weight="900" fill="#FFFFFF">Workload ID</tspan><tspan> canon</tspan>
+            font-size="11.8" fill="#A0AEC0" opacity="0.86">
+        • <tspan font-weight="900" fill="#E2E8F0">Workload ID</tspan><tspan> canon</tspan>
       </text>
       <text x="16" y="124" font-family="'Segoe UI', system-ui, -apple-system, sans-serif"
-            font-size="11.8" fill="#E2E8F0" opacity="0.96">
-        • <tspan font-weight="900" fill="#FFFFFF">Probe</tspan><tspan> + VRAM peaks</tspan>
+            font-size="11.8" fill="#A0AEC0" opacity="0.86">
+        • <tspan font-weight="900" fill="#E2E8F0">Probe</tspan><tspan> + VRAM peaks</tspan>
       </text>
     </g>
 
