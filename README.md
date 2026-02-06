@@ -19,7 +19,7 @@ Research preview. Chapter #1 work (GPU limiter / probe harness / VRAM accounting
 - Quickstart (local dev): `Golden Draft/docs/ops/quickstart_v1.md`
 - Reproducibility checklist: `Golden Draft/docs/ops/reproducibility_v1.md`
 - GPU objective/stability contract: `Golden Draft/docs/gpu/objective_contract_v1.md`
-- Roadmap (public): https://github.com/users/Kenessy/projects/4
+- Roadmap (public): https://github.com/orgs/VRAXION/projects/4
 - Releases (public proof): https://github.com/VRAXION/VRAXION/releases
 
 ## Quickstart (safe commands)
