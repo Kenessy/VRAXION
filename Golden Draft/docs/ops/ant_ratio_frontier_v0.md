@@ -13,6 +13,15 @@ The output is:
 - Summary table: `ant_ratio_summary.csv`
 - Interactive plot: `ant_ratio_frontier_v0.html` (single HTML file)
 
+Derived columns in `ant_ratio_summary.csv`:
+
+- `ant_body_cells`: `ant_ring_len * ant_slot_dim` mirrored from packet fields.
+- `ant_body_scale_vs_small`: normalized body size where small preset (`2048*256`) is `1.0`.
+- `vram_target_abs_error`: `abs(vram_ratio_reserved - 0.85)` to rank closeness to target budget.
+- `tokens_per_vram_ratio`: throughput efficiency `throughput_tokens_per_s / vram_ratio_reserved`.
+- `assoc_acc_per_token_per_s`: capability per speed unit `assoc_byte_disjoint_accuracy / throughput_tokens_per_s`.
+- `assoc_acc_per_vram_ratio`: capability per allocator-budget unit `assoc_byte_disjoint_accuracy / vram_ratio_reserved`.
+
 Important invariants
 
 - PASS/FAIL is read from artifacts (not process exit code):
@@ -57,3 +66,7 @@ Notes
 
 - This is an OD1-first v0. It is not a general benchmarking suite.
 - Avoid comparing capability numbers across different token budgets or eval splits.
+- For ranking candidates into a "next sweep shortlist", use:
+  - primary filter: PASS configs near target VRAM (`vram_target_abs_error` small),
+  - tie-break 1: higher `tokens_per_vram_ratio`,
+  - tie-break 2: higher `assoc_acc_per_vram_ratio`.

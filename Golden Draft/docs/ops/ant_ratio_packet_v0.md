@@ -46,11 +46,16 @@ python "Golden Draft/tools/ant_ratio_packet_v0.py" --probe-run-root <dir> --asso
 
 Required keys (present, may be `null` if the source artifact is missing data):
 
-- Identity: `ant_tier`, `ant_ring_len`, `ant_slot_dim`, `expert_heads`, `batch_size`, `precision`, `amp`, `seq_len`
+- Identity: `ant_tier`, `ant_ring_len`, `ant_slot_dim`, `ant_body_cells`, `ant_body_scale_vs_small`, `expert_heads`, `batch_size`, `precision`, `amp`, `seq_len`
 - Cost: `vram_ratio_reserved`, `throughput_tokens_per_s`
 - Capability: `assoc_byte_disjoint_accuracy`, `assoc_eval_disjoint`
 - Stability: `stability_pass`, `fail_reasons`, `had_oom`, `had_nan`, `had_inf`
 - Provenance: `probe_run_root`, `assoc_run_root`, `git_commit`, `generated_utc`
+
+`ant_body_cells` and `ant_body_scale_vs_small` are derived convenience fields:
+
+- `ant_body_cells = ant_ring_len * ant_slot_dim`
+- `ant_body_scale_vs_small = ant_body_cells / (2048*256)` where the small preset is baseline `1.0`
 
 ## PASS/FAIL Rule (Locked)
 
@@ -71,4 +76,3 @@ The packet optionally records a fixed token budget policy:
 
 This supports comparisons across different batch sizes without accidentally
 rewarding "bigger batch saw more data" when the training step budget is fixed.
-

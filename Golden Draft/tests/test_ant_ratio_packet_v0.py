@@ -68,6 +68,8 @@ class TestAntRatioPacketV0(unittest.TestCase):
 
             self.assertEqual(pkt["schema_version"], "ant_ratio_packet_v0")
             self.assertEqual(pkt["ant_tier"], "small")
+            self.assertEqual(pkt["ant_body_cells"], 2048 * 256)
+            self.assertAlmostEqual(pkt["ant_body_scale_vs_small"], 1.0, places=9)
             self.assertEqual(pkt["expert_heads"], 4)
             self.assertEqual(pkt["batch_size"], 16)
             self.assertEqual(pkt["seq_len"], 256)

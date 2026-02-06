@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import subprocess
 import sys
@@ -99,15 +100,21 @@ def pick_batch_for_target(
 
     notes: List[str] = []
     obs: List[ProbeObservation] = []
+    obs_by_batch: Dict[int, ProbeObservation] = {}
     calls = 0
 
     def _eval(b: int) -> ProbeObservation:
         nonlocal calls
+        b = int(b)
+        existing = obs_by_batch.get(b)
+        if existing is not None:
+            return existing
         if calls >= int(max_calls):
             raise PickBatchError(f"probe call budget exceeded (max_calls={max_calls})")
         calls += 1
-        o = eval_at_batch(int(b))
+        o = eval_at_batch(b)
         obs.append(o)
+        obs_by_batch[b] = o
         return o
 
     # Step 1: start at B=1.
@@ -135,7 +142,18 @@ def pick_batch_for_target(
             break
         if float(last_pass.vram_ratio_reserved) >= float(accept_low):
             break
-        b *= 2
+
+        # Prefer a proportional jump toward the target when it's smaller than doubling.
+        # This reduces the number of "too-high" probes (which can be slow/unstable under WDDM)
+        # without assuming the ratio is perfectly linear.
+        ratio = float(last_pass.vram_ratio_reserved)
+        if ratio <= 0.0:
+            b_next = int(b) * 2
+        else:
+            est = int(math.ceil(float(b) * (float(target_ratio) / ratio)))
+            b_next = min(int(b) * 2, max(int(b) + 1, est))
+        b = int(b_next)
+
         o = _eval(b)
         if not o.is_pass:
             boundary_fail = o
@@ -206,14 +224,17 @@ def pick_batch_for_target(
             hi = o.batch
             break
 
-    refine_budget = min(6, max(0, int(max_calls) - calls))
-    for _ in range(int(refine_budget)):
+    refine_steps_used = 0
+    while calls < int(max_calls) and refine_steps_used < 6:
         if hi is None:
             break
         if int(hi) - int(lo) <= 1:
             break
         mid = (int(lo) + int(hi)) // 2
+        mid_already = int(mid) in obs_by_batch
         o = _eval(mid)
+        if not mid_already:
+            refine_steps_used += 1
         if not o.is_pass:
             hi = mid
             boundary_fail = o
@@ -480,4 +501,3 @@ def datetime_now_utc() -> str:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

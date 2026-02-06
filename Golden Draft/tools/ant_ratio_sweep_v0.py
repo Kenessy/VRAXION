@@ -437,16 +437,38 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         with packets_jsonl.open("a", encoding="utf-8") as f:
             f.write(json.dumps(pkt, sort_keys=True, ensure_ascii=True) + "\n")
 
+        vram_ratio = pkt.get("vram_ratio_reserved")
+        throughput_tokens = pkt.get("throughput_tokens_per_s")
+        capability_acc = pkt.get("assoc_byte_disjoint_accuracy")
+        cap_per_token: Optional[float] = None
+        cap_per_vram: Optional[float] = None
+        tokens_per_vram: Optional[float] = None
+        target_abs_error: Optional[float] = None
+        if isinstance(vram_ratio, (int, float)) and float(vram_ratio) > 0.0:
+            if isinstance(throughput_tokens, (int, float)) and float(throughput_tokens) > 0.0:
+                tokens_per_vram = float(throughput_tokens) / float(vram_ratio)
+            if isinstance(capability_acc, (int, float)):
+                cap_per_vram = float(capability_acc) / float(vram_ratio)
+                target_abs_error = abs(float(vram_ratio) - 0.85)
+        if isinstance(capability_acc, (int, float)) and isinstance(throughput_tokens, (int, float)) and float(throughput_tokens) > 0.0:
+            cap_per_token = float(capability_acc) / float(throughput_tokens)
+
         csv_rows.append(
             {
                 "ant_tier": tier,
+                "ant_body_cells": pkt.get("ant_body_cells"),
+                "ant_body_scale_vs_small": pkt.get("ant_body_scale_vs_small"),
                 "expert_heads": int(eh),
                 "batch": int(batch),
                 "steps": int(steps),
                 "probe_pass": bool(_is_probe_pass(probe_metrics)),
-                "vram_ratio_reserved": pkt.get("vram_ratio_reserved"),
-                "throughput_tokens_per_s": pkt.get("throughput_tokens_per_s"),
-                "assoc_byte_disjoint_accuracy": pkt.get("assoc_byte_disjoint_accuracy"),
+                "vram_ratio_reserved": vram_ratio,
+                "vram_target_abs_error": target_abs_error,
+                "throughput_tokens_per_s": throughput_tokens,
+                "tokens_per_vram_ratio": tokens_per_vram,
+                "assoc_byte_disjoint_accuracy": capability_acc,
+                "assoc_acc_per_token_per_s": cap_per_token,
+                "assoc_acc_per_vram_ratio": cap_per_vram,
                 "probe_run_root": pkt.get("probe_run_root"),
                 "assoc_run_root": pkt.get("assoc_run_root"),
             }

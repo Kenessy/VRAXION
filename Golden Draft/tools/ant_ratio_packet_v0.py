@@ -23,6 +23,7 @@ from typing import Any, Dict, Optional, Tuple
 
 
 SCHEMA_VERSION = "ant_ratio_packet_v0"
+SMALL_ANT_BODY_CELLS = 2048 * 256
 
 
 KNOWN_ANT_TIERS: dict[tuple[int, int], str] = {
@@ -113,6 +114,12 @@ def build_packet(
 
     ring_len = ant_spec.get("ring_len")
     slot_dim = ant_spec.get("slot_dim")
+    ant_body_cells: Optional[int] = None
+    ant_body_scale_vs_small: Optional[float] = None
+    if isinstance(ring_len, int) and isinstance(slot_dim, int):
+        ant_body_cells = int(ring_len) * int(slot_dim)
+        if SMALL_ANT_BODY_CELLS > 0:
+            ant_body_scale_vs_small = float(ant_body_cells) / float(SMALL_ANT_BODY_CELLS)
     ant_tier = ant_tier_override
     if ant_tier is None and isinstance(ring_len, int) and isinstance(slot_dim, int):
         ant_tier = KNOWN_ANT_TIERS.get((int(ring_len), int(slot_dim)))
@@ -151,6 +158,8 @@ def build_packet(
         "ant_tier": ant_tier,
         "ant_ring_len": int(ring_len) if isinstance(ring_len, int) else None,
         "ant_slot_dim": int(slot_dim) if isinstance(slot_dim, int) else None,
+        "ant_body_cells": ant_body_cells,
+        "ant_body_scale_vs_small": ant_body_scale_vs_small,
         "expert_heads": int(metrics.get("out_dim")) if isinstance(metrics.get("out_dim"), int) else None,
         "batch_size": int(batch) if isinstance(batch, int) else None,
         "precision": metrics.get("precision"),
