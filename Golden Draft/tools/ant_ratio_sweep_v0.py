@@ -402,9 +402,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         ring_len, slot_dim = _ant_shape_for_tier(tier)
         steps = tb.steps_for_batch(int(batch))
         assoc_dir = out_root / "runs_assoc" / cfg_tag / f"seed{int(args.cap_seed)}"
-        # Guarantee at least one checkpoint write for bounded smoke runs where
-        # capability steps can be lower than the default save cadence.
-        save_every = max(1, min(int(args.cap_save_every), int(steps)))
+        # Capability runs in this sweep are intentionally short/bounded. The
+        # wallclock trainer checks MAX_STEPS before checkpoint cadence, so a
+        # larger save interval can miss all saves. Force every-step saving to
+        # guarantee checkpoint availability for postmortem eval.
+        save_every = 1
         ckpt = _run_capability_train(
             repo_root=repo_root,
             run_root=assoc_dir,
