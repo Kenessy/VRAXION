@@ -1,180 +1,462 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg width="1200" height="240" viewBox="0 0 1200 240" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
-  <title id="title">VRAXION Phase Columns</title>
-  <desc id="desc">Columnar roadmap with vertical separators. Milestone 03 (Stabilization / Refactor) is highlighted as the active phase.</desc>
+<svg width="1200" height="348" viewBox="0 0 1200 348" fill="none"
+     xmlns="http://www.w3.org/2000/svg"
+     role="img" aria-labelledby="vpm7_title vpm7_desc">
+
+  <title id="vpm7_title">VRAXION · Engineering Milestones</title>
+  <desc id="vpm7_desc">
+    Columnar roadmap (01–07) for VRAXION on a GitHub-dark background. A compact status bar sits at the top
+    of the roadmap (Complete / In progress / Planned) and is visually encoded per column (cyan = complete,
+    magenta = in progress, neutral gray = planned with increasing uncertainty). Active focus is Chapter #1 GPU
+    guardrails + reproducibility (contracts → workload IDs → probe artifacts → VRAM budgets).
+  </desc>
+
+  <!--
+    VRAXION — PHASE MAP (PRODUCTION V7 · CONTENT-ALIGNED TO REPO ARTIFACTS)
+    Key updates:
+      - Milestone 03 renamed to "GPU CH1" (guardrails/repro pipeline).
+      - Bullets now match existing contracts/tools/docs (env lock, workload ID, probe, VRAM model).
+      - Bold/italic used inside SVG text for scanability (no foreignObject).
+      - Planned tiles remain graded by uncertainty; HIVE is most de-emphasized.
+  -->
 
   <defs>
-    <!-- Neon glows -->
-    <filter id="neon_cyan" x="-100%" y="-100%" width="300%" height="300%">
-      <feGaussianBlur stdDeviation="4" result="coloredBlur"/>
+    <pattern id="vpm7_grid" x="0" y="0" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M40 0 L0 0 0 40" fill="none" stroke="#1A2130" stroke-width="1"/>
+    </pattern>
+
+    <linearGradient id="vpm7_panel_fill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#0b1426" stop-opacity="0.94"/>
+      <stop offset="100%" stop-color="#0b1220" stop-opacity="1"/>
+    </linearGradient>
+
+    <linearGradient id="vpm7_bar_fill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#0b0f1a" stop-opacity="0.92"/>
+      <stop offset="100%" stop-color="#0b0f1a" stop-opacity="0.72"/>
+    </linearGradient>
+
+    <linearGradient id="vpm7_bar_complete" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#00F0FF" stop-opacity="0.22"/>
+      <stop offset="100%" stop-color="#00F0FF" stop-opacity="0.06"/>
+    </linearGradient>
+
+    <linearGradient id="vpm7_bar_inprogress" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#FF00FF" stop-opacity="0.22"/>
+      <stop offset="100%" stop-color="#FF00FF" stop-opacity="0.06"/>
+    </linearGradient>
+
+    <linearGradient id="vpm7_bar_planned_1" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#A0AEC0" stop-opacity="0.16"/>
+      <stop offset="100%" stop-color="#A0AEC0" stop-opacity="0.05"/>
+    </linearGradient>
+    <linearGradient id="vpm7_bar_planned_2" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#A0AEC0" stop-opacity="0.13"/>
+      <stop offset="100%" stop-color="#A0AEC0" stop-opacity="0.045"/>
+    </linearGradient>
+    <linearGradient id="vpm7_bar_planned_3" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#A0AEC0" stop-opacity="0.11"/>
+      <stop offset="100%" stop-color="#A0AEC0" stop-opacity="0.040"/>
+    </linearGradient>
+    <linearGradient id="vpm7_bar_planned_4" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#A0AEC0" stop-opacity="0.09"/>
+      <stop offset="100%" stop-color="#A0AEC0" stop-opacity="0.035"/>
+    </linearGradient>
+
+    <linearGradient id="vpm7_active_fade" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#FF00FF" stop-opacity="0.14"/>
+      <stop offset="100%" stop-color="#FF00FF" stop-opacity="0.02"/>
+    </linearGradient>
+
+    <linearGradient id="vpm7_bottom_fill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#0b0f1a" stop-opacity="0.70"/>
+      <stop offset="100%" stop-color="#0b0f1a" stop-opacity="0.92"/>
+    </linearGradient>
+
+    <clipPath id="vpm7_bar_clip">
+      <path d="M0 14 A14 14 0 0 1 14 0 H1146 A14 14 0 0 1 1160 14 V30 H0 Z"/>
+    </clipPath>
+
+    <filter id="vpm7_glow_cyan" x="-140%" y="-140%" width="380%" height="380%" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="2.6" result="b"/>
       <feMerge>
-        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="b"/>
         <feMergeNode in="SourceGraphic"/>
       </feMerge>
     </filter>
 
-    <!-- Subtle circuit grid (matches your other homepage SVGs) -->
-    <pattern id="circuit_grid" x="0" y="0" width="40" height="40" patternUnits="userSpaceOnUse">
-      <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1A2130" stroke-width="1"/>
-    </pattern>
-
-    <!-- Active column fade -->
-    <linearGradient id="active_fade" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#00F0FF" stop-opacity="0.10"/>
-      <stop offset="100%" stop-color="#00F0FF" stop-opacity="0.00"/>
-    </linearGradient>
+    <filter id="vpm7_glow_magenta" x="-140%" y="-140%" width="380%" height="380%" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="2.6" result="b"/>
+      <feMerge>
+        <feMergeNode in="b"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
   </defs>
 
-  <!-- Background -->
-  <rect width="1200" height="240" rx="8" fill="#0d1117"/>
-  <rect width="1200" height="240" fill="url(#circuit_grid)" opacity="0.16"/>
-  <rect x="0.5" y="0.5" width="1199" height="239" rx="8" stroke="#30363d" stroke-width="1"/>
+  <!-- BACKGROUND -->
+  <rect width="1200" height="348" rx="10" fill="#0d1117"/>
+  <rect width="1200" height="348" fill="url(#vpm7_grid)" opacity="0.20"/>
+  <rect x="0.5" y="0.5" width="1199" height="347" rx="10" stroke="#30363d"/>
 
-  <!-- Header -->
-  <text x="30" y="30" font-family="system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-weight="700" font-size="12" fill="#A0AEC0" letter-spacing="2">
-    PROJECT VRAXION: ENGINEERING MILESTONES
+  <!-- HEADER -->
+  <text x="28" y="40"
+        font-family="'Segoe UI', system-ui, -apple-system, sans-serif"
+        font-weight="900" font-size="15.5"
+        fill="#E2E8F0" letter-spacing="1.8">
+    VRAXION · ENGINEERING MILESTONES
   </text>
-  <line x1="30" y1="40" x2="1170" y2="40" stroke="#1A2130" stroke-width="1" stroke-dasharray="4 4"/>
 
-  <!-- Vertical dividers -->
-  <g stroke="#30363d" stroke-width="1" stroke-dasharray="2 2" opacity="0.55">
-    <line x1="171" y1="60" x2="171" y2="220"/>
-    <line x1="342" y1="60" x2="342" y2="220"/>
-    <line x1="514" y1="60" x2="514" y2="220"/>
-    <line x1="685" y1="60" x2="685" y2="220"/>
-    <line x1="857" y1="60" x2="857" y2="220"/>
-    <line x1="1028" y1="60" x2="1028" y2="220"/>
-  </g>
+  <text x="28" y="64"
+        font-family="'Segoe UI', system-ui, -apple-system, sans-serif"
+        font-size="12.8" fill="#6B7280">
+    System status: Chapter #1 (GPU guardrails + reproducibility) · Active milestone: 03
+  </text>
 
-  <!-- Shared font stacks -->
-  <!-- (kept inline per-element for maximum renderer compatibility) -->
+  <!-- Top-right callout (bold + readable on dark bg) -->
+  <text x="1172" y="64" text-anchor="end"
+        font-family="'Segoe UI', system-ui, -apple-system, sans-serif"
+        font-size="13.6" font-weight="950"
+        fill="#FF00FF" opacity="0.96"
+        stroke="#0d1117" stroke-width="3" paint-order="stroke"
+        filter="url(#vpm7_glow_magenta)">
+    03 · GPU CH1 (GUARDRAILS)
+  </text>
 
-  <!-- COLUMN 1: GENESIS -->
-  <g transform="translate(0, 60)">
-    <line x1="20" y1="0" x2="60" y2="0" stroke="#FF00FF" stroke-width="2" opacity="0.50"/>
-    <text x="20" y="25" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace" font-size="10" fill="#FF00FF" opacity="0.82">01 / CONCEPT</text>
-    <text x="20" y="45" font-family="system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-weight="750" font-size="14" fill="#E2E8F0">GENESIS</text>
+  <line x1="28" y1="78" x2="1172" y2="78" stroke="#1A2130" stroke-width="1" stroke-dasharray="4 6"/>
 
-    <g transform="translate(20, 75)">
-      <text y="0" font-family="system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="11" fill="#A0AEC0">
-        <tspan x="0" dy="0">• Theoretical architecture</tspan>
-        <tspan x="0" dy="16">• Constraint definition</tspan>
-        <tspan x="0" dy="16">• Core logic design</tspan>
+  <!-- ROADMAP CONTAINER -->
+  <g transform="translate(20,92)">
+    <rect width="1160" height="200" rx="14" fill="url(#vpm7_panel_fill)" stroke="#243041"/>
+
+    <!-- TOP STATUS BAR -->
+    <rect x="0" y="0" width="1160" height="30" rx="14" fill="url(#vpm7_bar_fill)" opacity="0.92"/>
+    <rect x="0" y="16" width="1160" height="14" fill="url(#vpm7_bar_fill)" opacity="0.92"/>
+
+    <!-- Per-column status tint -->
+    <g clip-path="url(#vpm7_bar_clip)">
+      <rect x="0"   y="0" width="166" height="30" fill="url(#vpm7_bar_complete)"/>
+      <rect x="166" y="0" width="166" height="30" fill="url(#vpm7_bar_complete)"/>
+      <rect x="332" y="0" width="166" height="30" fill="url(#vpm7_bar_inprogress)"/>
+      <rect x="498" y="0" width="166" height="30" fill="url(#vpm7_bar_planned_1)"/>
+      <rect x="664" y="0" width="166" height="30" fill="url(#vpm7_bar_planned_2)"/>
+      <rect x="830" y="0" width="166" height="30" fill="url(#vpm7_bar_planned_3)"/>
+      <rect x="996" y="0" width="164" height="30" fill="url(#vpm7_bar_planned_4)"/>
+    </g>
+
+    <line x1="0" y1="30" x2="1160" y2="30" stroke="#1A2130"/>
+
+    <!-- Active column fade (content region only) -->
+    <rect x="332" y="30" width="166" height="140" fill="url(#vpm7_active_fade)" opacity="0.95">
+      <animate attributeName="opacity" values="0.95;0.80;0.95" dur="7.8s" repeatCount="indefinite"/>
+    </rect>
+
+    <!-- BOTTOM PHASE-TYPE ROW -->
+    <rect x="0" y="170" width="1160" height="30" rx="14" fill="url(#vpm7_bottom_fill)" opacity="0.92"/>
+    <rect x="0" y="170" width="1160" height="14" fill="url(#vpm7_bottom_fill)" opacity="0.92"/>
+    <line x1="0" y1="170" x2="1160" y2="170" stroke="#1A2130"/>
+
+    <!-- Vertical separators -->
+    <g stroke="#30363d" stroke-width="1" stroke-dasharray="2 6" opacity="0.55" stroke-linecap="round">
+      <line x1="166" y1="10" x2="166" y2="190"/>
+      <line x1="332" y1="10" x2="332" y2="190"/>
+      <line x1="498" y1="10" x2="498" y2="190"/>
+      <line x1="664" y1="10" x2="664" y2="190"/>
+      <line x1="830" y1="10" x2="830" y2="190"/>
+      <line x1="996" y1="10" x2="996" y2="190"/>
+    </g>
+
+    <!-- STATUS BAR CONTENT -->
+    <g transform="translate(0,0)">
+      <g transform="translate(16,15)">
+        <circle r="8.5" fill="#00F0FF" opacity="0.10" stroke="#00F0FF" stroke-opacity="0.50"/>
+        <path d="M -4 0.5 L -1.5 3.5 L 5 -3"
+              fill="none" stroke="#00F0FF" stroke-width="2.2"
+              stroke-linecap="round" stroke-linejoin="round"
+              filter="url(#vpm7_glow_cyan)"/>
+      </g>
+      <text x="34" y="20" font-family="'Segoe UI', system-ui, -apple-system, sans-serif"
+            font-size="10.6" font-weight="900" fill="#00F0FF" opacity="0.90">
+        COMPLETE
       </text>
     </g>
 
-    <text x="20" y="145" font-family="system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="9" font-weight="700" fill="#A0AEC0" opacity="0.40" letter-spacing="1">COMPLETE</text>
-  </g>
-
-  <!-- COLUMN 2: PROTOTYPE -->
-  <g transform="translate(171, 60)">
-    <line x1="20" y1="0" x2="60" y2="0" stroke="#FF00FF" stroke-width="2" opacity="0.80"/>
-    <text x="20" y="25" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace" font-size="10" fill="#FF00FF" opacity="0.82">02 / EXPERIMENTAL</text>
-    <text x="20" y="45" font-family="system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-weight="750" font-size="14" fill="#E2E8F0">PROTOTYPE</text>
-
-    <g transform="translate(20, 75)">
-      <text y="0" font-family="system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="11" fill="#A0AEC0">
-        <tspan x="0" dy="0">• PoC validated</tspan>
-        <tspan x="0" dy="16">• Rapid iteration cycles</tspan>
-        <tspan x="0" dy="16">• Experimental codebase</tspan>
+    <g transform="translate(166,0)">
+      <g transform="translate(16,15)">
+        <circle r="8.5" fill="#00F0FF" opacity="0.10" stroke="#00F0FF" stroke-opacity="0.50"/>
+        <path d="M -4 0.5 L -1.5 3.5 L 5 -3"
+              fill="none" stroke="#00F0FF" stroke-width="2.2"
+              stroke-linecap="round" stroke-linejoin="round"
+              filter="url(#vpm7_glow_cyan)"/>
+      </g>
+      <text x="34" y="20" font-family="'Segoe UI', system-ui, -apple-system, sans-serif"
+            font-size="10.6" font-weight="900" fill="#00F0FF" opacity="0.90">
+        COMPLETE
       </text>
     </g>
 
-    <text x="20" y="145" font-family="system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="9" font-weight="700" fill="#A0AEC0" opacity="0.40" letter-spacing="1">COMPLETE</text>
-  </g>
-
-  <!-- COLUMN 3: REFACTOR (ACTIVE) -->
-  <g transform="translate(342, 60)">
-    <!-- Active background -->
-    <rect width="172" height="160" fill="url(#active_fade)"/>
-
-    <!-- Active top highlight -->
-    <line x1="0" y1="0" x2="172" y2="0" stroke="#00F0FF" stroke-width="2" filter="url(#neon_cyan)"/>
-
-    <text x="20" y="25" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace" font-size="10" fill="#00F0FF" font-weight="800" filter="url(#neon_cyan)">03 / STABILIZATION</text>
-    <text x="20" y="45" font-family="system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-weight="800" font-size="14" fill="#FFFFFF">REFACTOR</text>
-
-    <g transform="translate(20, 75)">
-      <text y="0" font-family="system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="11" fill="#E2E8F0">
-        <tspan x="0" dy="0">• Architecture consolidation</tspan>
-        <tspan x="0" dy="16">• Resilience engineering</tspan>
-        <tspan x="0" dy="16">• Stress &amp; load testing</tspan>
+    <g transform="translate(332,0)">
+      <g transform="translate(16,15)">
+        <circle r="8.5" fill="#FF00FF" opacity="0.10" stroke="#FF00FF" stroke-opacity="0.55"/>
+        <circle r="4.0" fill="#FF00FF" opacity="0.95" filter="url(#vpm7_glow_magenta)">
+          <animate attributeName="opacity" values="1;0.35;1" dur="1.8s" repeatCount="indefinite"/>
+          <animate attributeName="r" values="4.0;5.1;4.0" dur="1.8s" repeatCount="indefinite"/>
+        </circle>
+      </g>
+      <text x="34" y="20" font-family="'Segoe UI', system-ui, -apple-system, sans-serif"
+            font-size="10.6" font-weight="900" fill="#FF00FF" opacity="0.94">
+        IN PROGRESS
       </text>
     </g>
 
-    <!-- Pulse indicator -->
-    <circle cx="150" cy="140" r="4" fill="#00F0FF">
-      <animate attributeName="opacity" values="1;0.3;1" dur="1.5s" repeatCount="indefinite"/>
-    </circle>
-
-    <text x="20" y="145" font-family="system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="9" font-weight="800" fill="#00F0FF" letter-spacing="1">IN PROGRESS</text>
-  </g>
-
-  <!-- COLUMN 4: INSTINCT -->
-  <g transform="translate(514, 60)">
-    <line x1="20" y1="0" x2="60" y2="0" stroke="#30363d" stroke-width="1"/>
-    <text x="20" y="25" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace" font-size="10" fill="#A0AEC0" opacity="0.55">04 / BETA</text>
-    <text x="20" y="45" font-family="system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-weight="750" font-size="14" fill="#A0AEC0" opacity="0.78">INSTINCT</text>
-
-    <g transform="translate(20, 75)">
-      <text y="0" font-family="system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="11" fill="#A0AEC0" opacity="0.62">
-        <tspan x="0" dy="0">• Beta product release</tspan>
-        <tspan x="0" dy="16">• Stable inference engine</tspan>
-        <tspan x="0" dy="16">• Production API layers</tspan>
+    <g transform="translate(498,0)">
+      <g transform="translate(16,15)">
+        <circle r="8.5" fill="none" stroke="#A0AEC0" stroke-opacity="0.55"/>
+        <circle r="2.2" fill="#A0AEC0" opacity="0.30"/>
+      </g>
+      <text x="34" y="20" font-family="'Segoe UI', system-ui, -apple-system, sans-serif"
+            font-size="10.6" font-weight="900" fill="#A0AEC0" opacity="0.78">
+        PLANNED
       </text>
     </g>
 
-    <text x="20" y="145" font-family="system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="9" font-weight="700" fill="#A0AEC0" opacity="0.28" letter-spacing="1">PLANNED</text>
-  </g>
-
-  <!-- COLUMN 5: SCALE -->
-  <g transform="translate(685, 60)">
-    <line x1="20" y1="0" x2="60" y2="0" stroke="#30363d" stroke-width="1"/>
-    <text x="20" y="25" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace" font-size="10" fill="#A0AEC0" opacity="0.45">05 / OPTIMIZATION</text>
-    <text x="20" y="45" font-family="system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-weight="750" font-size="14" fill="#A0AEC0" opacity="0.68">SCALE</text>
-
-    <g transform="translate(20, 75)">
-      <text y="0" font-family="system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="11" fill="#A0AEC0" opacity="0.54">
-        <tspan x="0" dy="0">• Hardware optimization</tspan>
-        <tspan x="0" dy="16">• Latency reduction</tspan>
-        <tspan x="0" dy="16">• Compute density scaling</tspan>
+    <g transform="translate(664,0)">
+      <g transform="translate(16,15)">
+        <circle r="8.5" fill="none" stroke="#A0AEC0" stroke-opacity="0.55"/>
+        <circle r="2.2" fill="#A0AEC0" opacity="0.28"/>
+      </g>
+      <text x="34" y="20" font-family="'Segoe UI', system-ui, -apple-system, sans-serif"
+            font-size="10.6" font-weight="900" fill="#A0AEC0" opacity="0.74">
+        PLANNED
       </text>
     </g>
 
-    <text x="20" y="145" font-family="system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="9" font-weight="700" fill="#A0AEC0" opacity="0.22" letter-spacing="1">PLANNED</text>
-  </g>
-
-  <!-- COLUMN 6: SWARM -->
-  <g transform="translate(857, 60)">
-    <line x1="20" y1="0" x2="60" y2="0" stroke="#30363d" stroke-width="1"/>
-    <text x="20" y="25" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace" font-size="10" fill="#A0AEC0" opacity="0.35">06 / DIVERGENCE</text>
-    <text x="20" y="45" font-family="system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-weight="750" font-size="14" fill="#A0AEC0" opacity="0.56">SWARM</text>
-
-    <g transform="translate(20, 75)">
-      <text y="0" font-family="system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="11" fill="#A0AEC0" opacity="0.44">
-        <tspan x="0" dy="0">• Multi-agent protocol</tspan>
-        <tspan x="0" dy="16">• Distributed reasoning</tspan>
-        <tspan x="0" dy="16">• Divergent logic forks</tspan>
+    <g transform="translate(830,0)">
+      <g transform="translate(16,15)">
+        <circle r="8.5" fill="none" stroke="#A0AEC0" stroke-opacity="0.55"/>
+        <circle r="2.2" fill="#A0AEC0" opacity="0.26"/>
+      </g>
+      <text x="34" y="20" font-family="'Segoe UI', system-ui, -apple-system, sans-serif"
+            font-size="10.6" font-weight="900" fill="#A0AEC0" opacity="0.70">
+        PLANNED
       </text>
     </g>
 
-    <text x="20" y="145" font-family="system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="9" font-weight="700" fill="#A0AEC0" opacity="0.18" letter-spacing="1">PLANNED</text>
-  </g>
-
-  <!-- COLUMN 7: ASI -->
-  <g transform="translate(1028, 60)">
-    <line x1="20" y1="0" x2="60" y2="0" stroke="#30363d" stroke-width="1"/>
-    <text x="20" y="25" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace" font-size="10" fill="#A0AEC0" opacity="0.25">07 / HIVE MIND</text>
-    <text x="20" y="45" font-family="system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-weight="750" font-size="14" fill="#A0AEC0" opacity="0.46">ASI</text>
-
-    <g transform="translate(20, 75)">
-      <text y="0" font-family="system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="11" fill="#A0AEC0" opacity="0.34">
-        <tspan x="0" dy="0">• Edge hive sync</tspan>
-        <tspan x="0" dy="16">• Global synchronization</tspan>
-        <tspan x="0" dy="16">• Cognitive convergence</tspan>
+    <g transform="translate(996,0)">
+      <g transform="translate(16,15)">
+        <circle r="8.5" fill="none" stroke="#A0AEC0" stroke-opacity="0.55"/>
+        <circle r="2.2" fill="#A0AEC0" opacity="0.24"/>
+      </g>
+      <text x="34" y="20" font-family="'Segoe UI', system-ui, -apple-system, sans-serif"
+            font-size="10.6" font-weight="900" fill="#A0AEC0" opacity="0.66">
+        PLANNED
       </text>
     </g>
 
-    <text x="20" y="145" font-family="system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="9" font-weight="700" fill="#A0AEC0" opacity="0.14" letter-spacing="1">PLANNED</text>
+    <!-- MAIN CONTENT (titles + 3 bullet lines) -->
+    <!-- Column 01 -->
+    <g transform="translate(0,0)">
+      <text x="16" y="62" font-family="'Segoe UI', system-ui, -apple-system, sans-serif"
+            font-size="14.2" font-weight="950" fill="#E2E8F0">
+        GENESIS
+      </text>
+
+      <text x="16" y="92" font-family="'Segoe UI', system-ui, -apple-system, sans-serif"
+            font-size="11.8" fill="#A0AEC0" opacity="0.92">
+        • <tspan font-weight="900" fill="#E2E8F0">Identity</tspan><tspan> + scope</tspan>
+      </text>
+      <text x="16" y="108" font-family="'Segoe UI', system-ui, -apple-system, sans-serif"
+            font-size="11.8" fill="#A0AEC0" opacity="0.92">
+        • <tspan font-weight="900" fill="#E2E8F0">Repo map</tspan><tspan> + naming</tspan>
+      </text>
+      <text x="16" y="124" font-family="'Segoe UI', system-ui, -apple-system, sans-serif"
+            font-size="11.8" fill="#A0AEC0" opacity="0.92">
+        • <tspan font-weight="900" fill="#E2E8F0">License</tspan><tspan> + citation</tspan>
+      </text>
+    </g>
+
+    <!-- Column 02 -->
+    <g transform="translate(166,0)">
+      <text x="16" y="62" font-family="'Segoe UI', system-ui, -apple-system, sans-serif"
+            font-size="14.2" font-weight="950" fill="#E2E8F0" opacity="0.95">
+        PROTOTYPE
+      </text>
+
+      <text x="16" y="92" font-family="'Segoe UI', system-ui, -apple-system, sans-serif"
+            font-size="11.8" fill="#A0AEC0" opacity="0.86">
+        • <tspan font-weight="900" fill="#E2E8F0">INSTNCT</tspan><tspan> core runtime</tspan>
+      </text>
+      <text x="16" y="108" font-family="'Segoe UI', system-ui, -apple-system, sans-serif"
+            font-size="11.8" fill="#A0AEC0" opacity="0.86">
+        • <tspan font-weight="900" fill="#E2E8F0">CPU</tspan><tspan> unit tests</tspan>
+      </text>
+      <text x="16" y="124" font-family="'Segoe UI', system-ui, -apple-system, sans-serif"
+            font-size="11.8" fill="#A0AEC0" opacity="0.86">
+        • <tspan font-weight="900" fill="#E2E8F0">Golden</tspan><tspan> verifiers</tspan>
+      </text>
+    </g>
+
+    <!-- Column 03 (active) -->
+    <g transform="translate(332,0)">
+      <text x="16" y="62" font-family="'Segoe UI', system-ui, -apple-system, sans-serif"
+            font-size="14.2" font-weight="950" fill="#FFFFFF">
+        GPU CH1
+      </text>
+
+      <text x="16" y="92" font-family="'Segoe UI', system-ui, -apple-system, sans-serif"
+            font-size="11.8" fill="#E2E8F0" opacity="0.96">
+        • <tspan font-weight="900" fill="#FFFFFF">Env lock</tspan><tspan> + contract</tspan>
+      </text>
+      <text x="16" y="108" font-family="'Segoe UI', system-ui, -apple-system, sans-serif"
+            font-size="11.8" fill="#E2E8F0" opacity="0.96">
+        • <tspan font-weight="900" fill="#FFFFFF">Workload ID</tspan><tspan> canon</tspan>
+      </text>
+      <text x="16" y="124" font-family="'Segoe UI', system-ui, -apple-system, sans-serif"
+            font-size="11.8" fill="#E2E8F0" opacity="0.96">
+        • <tspan font-weight="900" fill="#FFFFFF">Probe</tspan><tspan> + VRAM peaks</tspan>
+      </text>
+    </g>
+
+    <!-- Column 04 -->
+    <g transform="translate(498,0)">
+      <text x="16" y="62" font-family="'Segoe UI', system-ui, -apple-system, sans-serif"
+            font-size="14.2" font-weight="900" fill="#A0AEC0" opacity="0.88">
+        INSTNCT BETA
+      </text>
+
+      <text x="16" y="92" font-family="'Segoe UI', system-ui, -apple-system, sans-serif"
+            font-size="11.8" fill="#A0AEC0" opacity="0.70">
+        • <tspan font-weight="900" fill="#E2E8F0">Bench pack</tspan><tspan> + baselines</tspan>
+      </text>
+      <text x="16" y="108" font-family="'Segoe UI', system-ui, -apple-system, sans-serif"
+            font-size="11.8" fill="#A0AEC0" opacity="0.70">
+        • <tspan font-weight="900" fill="#E2E8F0">Stable CLI</tspan><tspan> surface</tspan>
+      </text>
+      <text x="16" y="124" font-family="'Segoe UI', system-ui, -apple-system, sans-serif"
+            font-size="11.8" fill="#A0AEC0" opacity="0.70">
+        • <tspan font-weight="900" fill="#E2E8F0">CI</tspan><tspan> + releases</tspan>
+      </text>
+    </g>
+
+    <!-- Column 05 -->
+    <g transform="translate(664,0)">
+      <text x="16" y="62" font-family="'Segoe UI', system-ui, -apple-system, sans-serif"
+            font-size="14.2" font-weight="900" fill="#A0AEC0" opacity="0.80">
+        SCALE
+      </text>
+
+      <text x="16" y="92" font-family="'Segoe UI', system-ui, -apple-system, sans-serif"
+            font-size="11.8" fill="#A0AEC0" opacity="0.62">
+        • <tspan font-weight="900" fill="#E2E8F0">Throughput</tspan><tspan>/VRAM tuning</tspan>
+      </text>
+      <text x="16" y="108" font-family="'Segoe UI', system-ui, -apple-system, sans-serif"
+            font-size="11.8" fill="#A0AEC0" opacity="0.62">
+        • <tspan font-weight="900" fill="#E2E8F0">Precision</tspan><tspan> ladder gates</tspan>
+      </text>
+      <text x="16" y="124" font-family="'Segoe UI', system-ui, -apple-system, sans-serif"
+            font-size="11.8" fill="#A0AEC0" opacity="0.62">
+        • <tspan font-weight="900" fill="#E2E8F0">Kernel</tspan><tspan> profiling</tspan>
+      </text>
+    </g>
+
+    <!-- Column 06 -->
+    <g transform="translate(830,0)">
+      <text x="16" y="62" font-family="'Segoe UI', system-ui, -apple-system, sans-serif"
+            font-size="14.2" font-weight="900" fill="#A0AEC0" opacity="0.72">
+        SWARM
+      </text>
+
+      <text x="16" y="92" font-family="'Segoe UI', system-ui, -apple-system, sans-serif"
+            font-size="11.8" fill="#A0AEC0" opacity="0.54">
+        • <tspan font-weight="900" fill="#E2E8F0">Expert</tspan><tspan> growth tools</tspan>
+      </text>
+      <text x="16" y="108" font-family="'Segoe UI', system-ui, -apple-system, sans-serif"
+            font-size="11.8" fill="#A0AEC0" opacity="0.54">
+        • <tspan font-weight="900" fill="#E2E8F0">Routing</tspan><tspan> invariants</tspan>
+      </text>
+      <text x="16" y="124" font-family="'Segoe UI', system-ui, -apple-system, sans-serif"
+            font-size="11.8" fill="#A0AEC0" opacity="0.54">
+        • <tspan font-weight="900" fill="#E2E8F0">Participation</tspan><tspan> metrics</tspan>
+      </text>
+    </g>
+
+    <!-- Column 07 -->
+    <g transform="translate(996,0)">
+      <text x="16" y="62" font-family="'Segoe UI', system-ui, -apple-system, sans-serif"
+            font-size="14.2" font-weight="900" fill="#A0AEC0" opacity="0.62">
+        HIVE
+      </text>
+
+      <text x="16" y="92" font-family="'Segoe UI', system-ui, -apple-system, sans-serif"
+            font-size="11.8" fill="#A0AEC0" opacity="0.46">
+        • <tspan font-weight="900" fill="#E2E8F0">Distributed</tspan><tspan> control</tspan>
+      </text>
+      <text x="16" y="108" font-family="'Segoe UI', system-ui, -apple-system, sans-serif"
+            font-size="11.8" fill="#A0AEC0" opacity="0.46">
+        • <tspan font-weight="900" fill="#E2E8F0">Safety</tspan><tspan> instrumentation</tspan>
+      </text>
+      <text x="16" y="124" font-family="'Segoe UI', system-ui, -apple-system, sans-serif"
+            font-size="11.8" fill="#A0AEC0" opacity="0.46">
+        • <tspan font-weight="900" fill="#E2E8F0">Governance</tspan><tspan> + rollout</tspan>
+      </text>
+    </g>
+
+    <!-- BOTTOM PHASE-TYPE LABELS -->
+    <text x="16" y="191"
+          font-family="'Segoe UI Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
+          font-size="10.8" fill="#A0AEC0" opacity="0.80">
+      01 · CONCEPT
+    </text>
+
+    <text x="182" y="191"
+          font-family="'Segoe UI Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
+          font-size="10.8" fill="#A0AEC0" opacity="0.80">
+      02 · EXPERIMENTAL
+    </text>
+
+    <text x="348" y="191"
+          font-family="'Segoe UI Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
+          font-size="10.8" font-weight="900"
+          fill="#FF00FF" opacity="0.95"
+          stroke="#0d1117" stroke-width="3" paint-order="stroke"
+          filter="url(#vpm7_glow_magenta)">
+      03 · GPU CH1
+    </text>
+
+    <text x="514" y="191"
+          font-family="'Segoe UI Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
+          font-size="10.8" fill="#A0AEC0" opacity="0.72">
+      04 · BETA
+    </text>
+
+    <text x="680" y="191"
+          font-family="'Segoe UI Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
+          font-size="10.8" fill="#A0AEC0" opacity="0.66">
+      05 · OPTIMIZE
+    </text>
+
+    <text x="846" y="191"
+          font-family="'Segoe UI Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
+          font-size="10.8" fill="#A0AEC0" opacity="0.60">
+      06 · SWARM
+    </text>
+
+    <text x="1012" y="191"
+          font-family="'Segoe UI Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
+          font-size="10.8" fill="#A0AEC0" opacity="0.54">
+      07 · HIVE SYNC
+    </text>
   </g>
+
+  <!-- FOOTER + CREDIT -->
+  <text x="28" y="336"
+        font-family="'Segoe UI', system-ui, -apple-system, sans-serif"
+        font-size="12.6" fill="#6B7280">
+    Roadmap is directional; implementation evidence lives in the Wiki + PR history.
+  </text>
+
+  <text x="1172" y="336" text-anchor="end"
+        font-family="'Segoe UI', system-ui, -apple-system, sans-serif"
+        font-size="12.6" fill="#A0AEC0" opacity="0.74">
+    Made by Daniel Kenessy
+  </text>
 </svg>
