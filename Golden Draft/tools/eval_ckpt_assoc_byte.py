@@ -72,14 +72,15 @@ def _infer_synth_from_log(log_txt: str) -> Dict[str, Any]:
     # Example:
     # [synth] mode=assoc_byte rows=2000 keys=64 vals=16 pairs=4 mq_dup=1 len=128
     m = re.search(
-        r"\[synth\]\s+mode=(?P<mode>\S+)\s+rows=(?P<rows>\d+)\s+keys=(?P<keys>\d+)\s+vals=(?P<vals>\d+)\s+pairs=(?P<pairs>\d+)\s+mq_dup=(?P<mq_dup>\d+)\s+len=(?P<seq_len>\d+)",
+        r"\[synth\]\s+mode=(?P<mode>\S+)\s+rows=(?P<rows>\d+)\s+keys=(?P<keys>\d+)\s+vals=(?P<vals>\d+)\s+pairs=(?P<pairs>\d+)(?:\s+mq_dup=(?P<mq_dup>\d+))?\s+len=(?P<seq_len>\d+)",
         log_txt,
     )
     if not m:
         raise RuntimeError("Could not infer synth settings from vraxion.log (missing [synth] header).")
     out: Dict[str, Any] = dict(m.groupdict())
-    for k in ("rows", "keys", "vals", "pairs", "mq_dup", "seq_len"):
+    for k in ("rows", "keys", "vals", "pairs", "seq_len"):
         out[k] = int(out[k])
+    out["mq_dup"] = int(out["mq_dup"]) if out.get("mq_dup") is not None else 1
     return out
 
 
@@ -240,6 +241,20 @@ def _count_module_params(mod: Any) -> int:
         return 0
 
 
+def _build_absolute_hallway(shape: Dict[str, Any]):
+    # Keep global expert-head topology aligned with checkpoint shape before
+    # constructing the model, or strict state_dict load can mismatch.
+    import vraxion.instnct.absolute_hallway as ah  # type: ignore
+
+    ah.EXPERT_HEADS = int(shape["expert_heads"])
+    return ah.AbsoluteHallway(
+        input_dim=1,
+        num_classes=int(shape["num_classes"]),
+        ring_len=int(shape["ring_len"]),
+        slot_dim=int(shape["slot_dim"]),
+    )
+
+
 def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     p = argparse.ArgumentParser()
     p.add_argument("--run-root", type=str, required=True)
@@ -388,14 +403,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         instnct_eval.log_eval_overlap(loader.dataset, eval_loader.dataset, eval_size, "subset", log=infra.log)
 
     if model_kind == "absolute_hallway":
-        from vraxion.instnct.absolute_hallway import AbsoluteHallway  # type: ignore
-
-        model = AbsoluteHallway(
-            input_dim=1,
-            num_classes=int(shape["num_classes"]),
-            ring_len=int(shape["ring_len"]),
-            slot_dim=int(shape["slot_dim"]),
-        )
+        model = _build_absolute_hallway(shape)
         model.load_state_dict(state, strict=True)
     else:
         # Legacy model support (optional): require external Golden Code to provide it.

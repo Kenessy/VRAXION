@@ -113,6 +113,7 @@ def _run_probe(
     precision: str,
     amp: int,
     force_device: str,
+    timeout_s: int,
 ) -> Tuple[Path, Dict[str, Any]]:
     tool = repo_root / "Golden Draft" / "tools" / "gpu_capacity_probe.py"
     if not tool.exists():
@@ -145,7 +146,11 @@ def _run_probe(
     if force_device:
         env["VRX_FORCE_DEVICE"] = str(force_device)
 
-    rc = subprocess.call(cmd, cwd=str(repo_root), env=env)
+    try:
+        cp = subprocess.run(cmd, cwd=str(repo_root), env=env, timeout=max(1, int(timeout_s)))
+        rc = int(cp.returncode)
+    except subprocess.TimeoutExpired as exc:
+        raise SweepError(f"probe timeout after {int(timeout_s)}s: out_dir={out_dir}") from exc
     if int(rc) == 2:
         raise SweepError(f"probe harness rc=2 (invalid args or cannot write): out_dir={out_dir}")
 
@@ -177,7 +182,8 @@ def _run_capability_train(
     ptr_dtype: str,
     offline_only: bool,
     save_every: int,
-) -> Path:
+    timeout_s: int,
+) -> Tuple[Path, int]:
     """Run one synth assoc_byte training job and return checkpoint path."""
 
     run_root.mkdir(parents=True, exist_ok=True)
@@ -212,10 +218,16 @@ def _run_capability_train(
             "VRX_MAX_SAMPLES": str(int(max_samples)),
             "VRX_EVAL_SAMPLES": str(int(eval_samples)),
             "VRX_MAX_STEPS": str(int(steps)),
+            # Ensure bounded sweep runs cannot be overridden by ambient shell env.
+            "VRX_IGNORE_MAX_STEPS": "0",
             # The modern runner path is phase-driven; set both phase and max caps
             # so capability loops remain bounded and deterministic.
             "VRX_PHASE_A_STEPS": str(int(steps)),
             "VRX_PHASE_B_STEPS": "0",
+            # Sweep runs only need checkpoints; disable in-loop checkpoint eval to
+            # avoid device-mismatch failures in eval paths and keep run cost stable.
+            "VRX_EVAL_AT_CHECKPOINT": "0",
+            "VRX_EVAL_EVERY_STEPS": "0",
             # Saving
             "VRX_RESUME": "0",
             "VRX_CKPT": str(ckpt_path),
@@ -229,19 +241,26 @@ def _run_capability_train(
     )
 
     cmd = [sys.executable, "-u", str(repo_root / "Golden Draft" / "vraxion_run.py")]
-    rc = subprocess.call(cmd, cwd=str(repo_root), env=env)
-    if int(rc) != 0:
-        raise SweepError(f"capability train rc={rc} (run_root={run_root})")
+    try:
+        cp = subprocess.run(cmd, cwd=str(repo_root), env=env, timeout=max(1, int(timeout_s)))
+        rc = int(cp.returncode)
+    except subprocess.TimeoutExpired as exc:
+        raise SweepError(f"capability train timeout after {int(timeout_s)}s (run_root={run_root})") from exc
 
-    if not ckpt_path.exists():
-        # Fallbacks used by other tooling.
-        for name in ("checkpoint_last_good.pt", "checkpoint.pt"):
-            cand = run_root / name
-            if cand.exists():
-                return cand
-        raise SweepError(f"checkpoint not found under run_root={run_root}")
+    # Artifact-truth: treat an existing checkpoint as success even if the
+    # subprocess return code is nonzero (some Windows paths surface -1 / 255
+    # despite writing a valid checkpoint).
+    if ckpt_path.exists():
+        return ckpt_path, rc
 
-    return ckpt_path
+    # Fallbacks used by other tooling.
+    for name in ("checkpoint_last_good.pt", "checkpoint.pt"):
+        cand = run_root / name
+        if cand.exists():
+            return cand, rc
+
+    # No checkpoint means we cannot proceed, regardless of rc.
+    raise SweepError(f"checkpoint not found under run_root={run_root} (rc={rc})")
 
 
 def _run_capability_eval(
@@ -254,6 +273,7 @@ def _run_capability_eval(
     device: str,
     eval_seed_offset: int,
     force_disjoint: bool,
+    timeout_s: int,
 ) -> Path:
     tool = repo_root / "Golden Draft" / "tools" / "eval_ckpt_assoc_byte.py"
     if not tool.exists():
@@ -278,7 +298,11 @@ def _run_capability_eval(
     if force_disjoint:
         cmd.append("--force-eval-disjoint")
 
-    rc = subprocess.call(cmd, cwd=str(repo_root))
+    try:
+        cp = subprocess.run(cmd, cwd=str(repo_root), timeout=max(1, int(timeout_s)))
+        rc = int(cp.returncode)
+    except subprocess.TimeoutExpired as exc:
+        raise SweepError(f"capability eval timeout after {int(timeout_s)}s (run_root={run_root})") from exc
     if int(rc) != 0:
         raise SweepError(f"capability eval rc={rc} (run_root={run_root})")
 
@@ -327,6 +351,9 @@ def _parse_args(argv: Optional[Sequence[str]]) -> argparse.Namespace:
     ap.add_argument("--cap-assoc-pairs", type=int, default=4)
     ap.add_argument("--cap-assoc-val-range", type=int, default=256)
     ap.add_argument("--cap-max-samples", type=int, default=8192)
+    ap.add_argument("--probe-timeout-s", type=int, default=900)
+    ap.add_argument("--cap-train-timeout-s", type=int, default=900)
+    ap.add_argument("--cap-eval-timeout-s", type=int, default=900)
     # Fairness
     ap.add_argument("--seq-len", type=int, default=256, help="Accounting seq_len used for token budget computation.")
     ap.add_argument("--token-budget", type=int, default=1_000_000, help="Fixed token budget for capability runs.")
@@ -365,6 +392,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     csv_rows: List[Dict[str, Any]] = []
 
+    failures: List[Dict[str, Any]] = []
+
     for r in rows:
         if not isinstance(r, dict):
             continue
@@ -380,112 +409,150 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
         cfg_tag = _safe_tag(f"{tier}_E{eh}_B{batch:04d}")
 
-        # 1) Probe run (cost metrics)
-        probe_dir = out_root / "runs_probe" / cfg_tag
-        probe_dir.mkdir(parents=True, exist_ok=True)
-        probe_out_dir = probe_dir / "probe"
-        probe_out, probe_metrics = _run_probe(
-            repo_root=repo_root,
-            out_dir=probe_out_dir,
-            ant=_ant_preset_for_tier(tier),
-            colony=str(args.probe_colony),
-            out_dim=int(eh),
-            batch=int(batch),
-            warmup_steps=int(args.probe_warmup_steps),
-            measure_steps=int(args.probe_measure_steps),
-            precision=str(args.probe_precision),
-            amp=int(args.probe_amp),
-            force_device=str(args.probe_force_device).strip(),
-        )
+        try:
+            # 1) Probe run (cost metrics)
+            probe_dir = out_root / "runs_probe" / cfg_tag
+            probe_dir.mkdir(parents=True, exist_ok=True)
+            probe_out_dir = probe_dir / "probe"
+            probe_out, probe_metrics = _run_probe(
+                repo_root=repo_root,
+                out_dir=probe_out_dir,
+                ant=_ant_preset_for_tier(tier),
+                colony=str(args.probe_colony),
+                out_dim=int(eh),
+                batch=int(batch),
+                warmup_steps=int(args.probe_warmup_steps),
+                measure_steps=int(args.probe_measure_steps),
+                precision=str(args.probe_precision),
+                amp=int(args.probe_amp),
+                force_device=str(args.probe_force_device).strip(),
+                timeout_s=int(args.probe_timeout_s),
+            )
 
-        # 2) Capability run (train + postmortem eval)
-        ring_len, slot_dim = _ant_shape_for_tier(tier)
-        steps = tb.steps_for_batch(int(batch))
-        assoc_dir = out_root / "runs_assoc" / cfg_tag / f"seed{int(args.cap_seed)}"
-        # Capability runs in this sweep are intentionally short/bounded. The
-        # wallclock trainer checks MAX_STEPS before checkpoint cadence, so a
-        # larger save interval can miss all saves. Force every-step saving to
-        # guarantee checkpoint availability for postmortem eval.
-        save_every = 1
-        ckpt = _run_capability_train(
-            repo_root=repo_root,
-            run_root=assoc_dir,
-            seed=int(args.cap_seed),
-            device=str(args.cap_device),
-            precision=str(args.cap_precision),
-            ring_len=int(ring_len),
-            slot_dim=int(slot_dim),
-            expert_heads=int(eh),
-            batch=int(batch),
-            steps=int(steps),
-            synth_len=int(args.cap_synth_len),
-            assoc_keys=int(args.cap_assoc_keys),
-            assoc_pairs=int(args.cap_assoc_pairs),
-            assoc_val_range=int(args.cap_assoc_val_range),
-            max_samples=int(args.cap_max_samples),
-            eval_samples=int(args.cap_eval_samples),
-            ptr_dtype=str(args.cap_ptr_dtype),
-            offline_only=bool(args.cap_offline_only),
-            save_every=int(save_every),
-        )
-        _run_capability_eval(
-            repo_root=repo_root,
-            run_root=assoc_dir,
-            checkpoint=ckpt,
-            eval_samples=int(args.cap_eval_samples),
-            batch_size=int(batch),
-            device=str(args.cap_device),
-            eval_seed_offset=int(args.cap_eval_seed_offset),
-            force_disjoint=bool(args.cap_force_disjoint),
-        )
+            # 2) Capability run (train + postmortem eval)
+            ring_len, slot_dim = _ant_shape_for_tier(tier)
+            steps = tb.steps_for_batch(int(batch))
+            assoc_dir = out_root / "runs_assoc" / cfg_tag / f"seed{int(args.cap_seed)}"
+            # Capability runs in this sweep are intentionally short/bounded. The
+            # wallclock trainer checks MAX_STEPS before checkpoint cadence, so a
+            # larger save interval can miss all saves. Force every-step saving to
+            # guarantee checkpoint availability for postmortem eval.
+            save_every = 1
+            ckpt, cap_train_rc = _run_capability_train(
+                repo_root=repo_root,
+                run_root=assoc_dir,
+                seed=int(args.cap_seed),
+                device=str(args.cap_device),
+                precision=str(args.cap_precision),
+                ring_len=int(ring_len),
+                slot_dim=int(slot_dim),
+                expert_heads=int(eh),
+                batch=int(batch),
+                steps=int(steps),
+                synth_len=int(args.cap_synth_len),
+                assoc_keys=int(args.cap_assoc_keys),
+                assoc_pairs=int(args.cap_assoc_pairs),
+                assoc_val_range=int(args.cap_assoc_val_range),
+                max_samples=int(args.cap_max_samples),
+                eval_samples=int(args.cap_eval_samples),
+                ptr_dtype=str(args.cap_ptr_dtype),
+                offline_only=bool(args.cap_offline_only),
+                save_every=int(save_every),
+                timeout_s=int(args.cap_train_timeout_s),
+            )
+            _run_capability_eval(
+                repo_root=repo_root,
+                run_root=assoc_dir,
+                checkpoint=ckpt,
+                eval_samples=int(args.cap_eval_samples),
+                batch_size=int(batch),
+                device=str(args.cap_device),
+                eval_seed_offset=int(args.cap_eval_seed_offset),
+                force_disjoint=bool(args.cap_force_disjoint),
+                timeout_s=int(args.cap_eval_timeout_s),
+            )
 
-        # 3) Join into packet and append.
-        pkt = build_packet(
-            probe_run_root=probe_out,
-            assoc_run_root=assoc_dir,
-            ant_tier_override=str(tier),
-            token_budget=pkt_budget,
-            capability_steps_override=int(steps),
-        )
-        with packets_jsonl.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(pkt, sort_keys=True, ensure_ascii=True) + "\n")
+            # 3) Join into packet and append.
+            pkt = build_packet(
+                probe_run_root=probe_out,
+                assoc_run_root=assoc_dir,
+                ant_tier_override=str(tier),
+                token_budget=pkt_budget,
+                capability_steps_override=int(steps),
+            )
+            pkt["cap_train_rc"] = int(cap_train_rc)
+            pkt["cap_train_nonzero_rc"] = bool(int(cap_train_rc) != 0)
+            with packets_jsonl.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(pkt, sort_keys=True, ensure_ascii=True) + "\n")
 
-        vram_ratio = pkt.get("vram_ratio_reserved")
-        throughput_tokens = pkt.get("throughput_tokens_per_s")
-        capability_acc = pkt.get("assoc_byte_disjoint_accuracy")
-        cap_per_token: Optional[float] = None
-        cap_per_vram: Optional[float] = None
-        tokens_per_vram: Optional[float] = None
-        target_abs_error: Optional[float] = None
-        if isinstance(vram_ratio, (int, float)) and float(vram_ratio) > 0.0:
-            if isinstance(throughput_tokens, (int, float)) and float(throughput_tokens) > 0.0:
-                tokens_per_vram = float(throughput_tokens) / float(vram_ratio)
-            if isinstance(capability_acc, (int, float)):
-                cap_per_vram = float(capability_acc) / float(vram_ratio)
-                target_abs_error = abs(float(vram_ratio) - 0.85)
-        if isinstance(capability_acc, (int, float)) and isinstance(throughput_tokens, (int, float)) and float(throughput_tokens) > 0.0:
-            cap_per_token = float(capability_acc) / float(throughput_tokens)
+            vram_ratio = pkt.get("vram_ratio_reserved")
+            throughput_tokens = pkt.get("throughput_tokens_per_s")
+            capability_acc = pkt.get("assoc_byte_disjoint_accuracy")
+            cap_per_token: Optional[float] = None
+            cap_per_vram: Optional[float] = None
+            tokens_per_vram: Optional[float] = None
+            target_abs_error: Optional[float] = None
+            if isinstance(vram_ratio, (int, float)) and float(vram_ratio) > 0.0:
+                if isinstance(throughput_tokens, (int, float)) and float(throughput_tokens) > 0.0:
+                    tokens_per_vram = float(throughput_tokens) / float(vram_ratio)
+                if isinstance(capability_acc, (int, float)):
+                    cap_per_vram = float(capability_acc) / float(vram_ratio)
+                    target_abs_error = abs(float(vram_ratio) - 0.85)
+            if isinstance(capability_acc, (int, float)) and isinstance(throughput_tokens, (int, float)) and float(throughput_tokens) > 0.0:
+                cap_per_token = float(capability_acc) / float(throughput_tokens)
 
-        csv_rows.append(
-            {
-                "ant_tier": tier,
-                "ant_body_cells": pkt.get("ant_body_cells"),
-                "ant_body_scale_vs_small": pkt.get("ant_body_scale_vs_small"),
-                "expert_heads": int(eh),
-                "batch": int(batch),
-                "steps": int(steps),
-                "probe_pass": bool(_is_probe_pass(probe_metrics)),
-                "vram_ratio_reserved": vram_ratio,
-                "vram_target_abs_error": target_abs_error,
-                "throughput_tokens_per_s": throughput_tokens,
-                "tokens_per_vram_ratio": tokens_per_vram,
-                "assoc_byte_disjoint_accuracy": capability_acc,
-                "assoc_acc_per_token_per_s": cap_per_token,
-                "assoc_acc_per_vram_ratio": cap_per_vram,
-                "probe_run_root": pkt.get("probe_run_root"),
-                "assoc_run_root": pkt.get("assoc_run_root"),
-            }
-        )
+            csv_rows.append(
+                {
+                    "status": "ok",
+                    "error": "",
+                    "ant_tier": tier,
+                    "ant_body_cells": pkt.get("ant_body_cells"),
+                    "ant_body_scale_vs_small": pkt.get("ant_body_scale_vs_small"),
+                    "expert_heads": int(eh),
+                    "batch": int(batch),
+                    "steps": int(steps),
+                    "cap_train_rc": int(cap_train_rc),
+                    "cap_train_nonzero_rc": bool(int(cap_train_rc) != 0),
+                    "probe_pass": bool(_is_probe_pass(probe_metrics)),
+                    "vram_ratio_reserved": vram_ratio,
+                    "vram_target_abs_error": target_abs_error,
+                    "throughput_tokens_per_s": throughput_tokens,
+                    "tokens_per_vram_ratio": tokens_per_vram,
+                    "assoc_byte_disjoint_accuracy": capability_acc,
+                    "assoc_acc_per_token_per_s": cap_per_token,
+                    "assoc_acc_per_vram_ratio": cap_per_vram,
+                    "probe_run_root": pkt.get("probe_run_root"),
+                    "assoc_run_root": pkt.get("assoc_run_root"),
+                }
+            )
+        except Exception as exc:
+            err = f"{type(exc).__name__}: {exc}"
+            failures.append({"config": cfg_tag, "error": err})
+            print(f"[vra78][warn] {cfg_tag}: {err}")
+            csv_rows.append(
+                {
+                    "status": "error",
+                    "error": err,
+                    "ant_tier": tier,
+                    "ant_body_cells": "",
+                    "ant_body_scale_vs_small": "",
+                    "expert_heads": int(eh),
+                    "batch": int(batch),
+                    "steps": "",
+                    "cap_train_rc": "",
+                    "cap_train_nonzero_rc": "",
+                    "probe_pass": "",
+                    "vram_ratio_reserved": "",
+                    "vram_target_abs_error": "",
+                    "throughput_tokens_per_s": "",
+                    "tokens_per_vram_ratio": "",
+                    "assoc_byte_disjoint_accuracy": "",
+                    "assoc_acc_per_token_per_s": "",
+                    "assoc_acc_per_vram_ratio": "",
+                    "probe_run_root": "",
+                    "assoc_run_root": "",
+                }
+            )
 
     _write_csv(summary_csv, csv_rows)
     packets = []
@@ -510,10 +577,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "max_steps": int(args.max_steps),
     }
     (out_root / "sweep_meta.json").write_text(_stable_json(meta), encoding="utf-8")
+    (out_root / "sweep_failures.json").write_text(_stable_json({"failures": failures}), encoding="utf-8")
 
     print(f"[vra78] packets: {packets_jsonl}")
     print(f"[vra78] csv: {summary_csv}")
     print(f"[vra78] html: {html_out}")
+    if failures:
+        print(f"[vra78] failures: {len(failures)} (see sweep_failures.json)")
     return 0
 
 
