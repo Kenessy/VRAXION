@@ -183,7 +183,7 @@ def _run_capability_train(
     offline_only: bool,
     save_every: int,
     timeout_s: int,
-) -> Path:
+) -> Tuple[Path, int]:
     """Run one synth assoc_byte training job and return checkpoint path."""
 
     run_root.mkdir(parents=True, exist_ok=True)
@@ -246,18 +246,21 @@ def _run_capability_train(
         rc = int(cp.returncode)
     except subprocess.TimeoutExpired as exc:
         raise SweepError(f"capability train timeout after {int(timeout_s)}s (run_root={run_root})") from exc
-    if int(rc) != 0:
-        raise SweepError(f"capability train rc={rc} (run_root={run_root})")
 
-    if not ckpt_path.exists():
-        # Fallbacks used by other tooling.
-        for name in ("checkpoint_last_good.pt", "checkpoint.pt"):
-            cand = run_root / name
-            if cand.exists():
-                return cand
-        raise SweepError(f"checkpoint not found under run_root={run_root}")
+    # Artifact-truth: treat an existing checkpoint as success even if the
+    # subprocess return code is nonzero (some Windows paths surface -1 / 255
+    # despite writing a valid checkpoint).
+    if ckpt_path.exists():
+        return ckpt_path, rc
 
-    return ckpt_path
+    # Fallbacks used by other tooling.
+    for name in ("checkpoint_last_good.pt", "checkpoint.pt"):
+        cand = run_root / name
+        if cand.exists():
+            return cand, rc
+
+    # No checkpoint means we cannot proceed, regardless of rc.
+    raise SweepError(f"checkpoint not found under run_root={run_root} (rc={rc})")
 
 
 def _run_capability_eval(
@@ -435,7 +438,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             # larger save interval can miss all saves. Force every-step saving to
             # guarantee checkpoint availability for postmortem eval.
             save_every = 1
-            ckpt = _run_capability_train(
+            ckpt, cap_train_rc = _run_capability_train(
                 repo_root=repo_root,
                 run_root=assoc_dir,
                 seed=int(args.cap_seed),
@@ -477,6 +480,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 token_budget=pkt_budget,
                 capability_steps_override=int(steps),
             )
+            pkt["cap_train_rc"] = int(cap_train_rc)
+            pkt["cap_train_nonzero_rc"] = bool(int(cap_train_rc) != 0)
             with packets_jsonl.open("a", encoding="utf-8") as f:
                 f.write(json.dumps(pkt, sort_keys=True, ensure_ascii=True) + "\n")
 
@@ -506,6 +511,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     "expert_heads": int(eh),
                     "batch": int(batch),
                     "steps": int(steps),
+                    "cap_train_rc": int(cap_train_rc),
+                    "cap_train_nonzero_rc": bool(int(cap_train_rc) != 0),
                     "probe_pass": bool(_is_probe_pass(probe_metrics)),
                     "vram_ratio_reserved": vram_ratio,
                     "vram_target_abs_error": target_abs_error,
@@ -532,6 +539,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     "expert_heads": int(eh),
                     "batch": int(batch),
                     "steps": "",
+                    "cap_train_rc": "",
+                    "cap_train_nonzero_rc": "",
                     "probe_pass": "",
                     "vram_ratio_reserved": "",
                     "vram_target_abs_error": "",
@@ -568,8 +577,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "max_steps": int(args.max_steps),
     }
     (out_root / "sweep_meta.json").write_text(_stable_json(meta), encoding="utf-8")
-    if failures:
-        (out_root / "sweep_failures.json").write_text(_stable_json({"failures": failures}), encoding="utf-8")
+    (out_root / "sweep_failures.json").write_text(_stable_json({"failures": failures}), encoding="utf-8")
 
     print(f"[vra78] packets: {packets_jsonl}")
     print(f"[vra78] csv: {summary_csv}")

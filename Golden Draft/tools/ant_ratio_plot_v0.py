@@ -99,6 +99,10 @@ def build_html(*, packets: List[Dict[str, Any]], title: str) -> str:
         z = _as_float(p.get("assoc_byte_disjoint_accuracy"))
         if x is None or y is None or z is None:
             continue
+        token_budget_steps = _as_int(p.get("token_budget_steps"))
+        assoc_eval_n = _as_int(p.get("assoc_eval_n"))
+        is_pass = bool(p.get("stability_pass") is True)
+        is_rankable = bool(is_pass and (token_budget_steps or 0) >= 30 and (assoc_eval_n or 0) >= 512)
         pts.append(
             {
                 "x": x,
@@ -107,14 +111,16 @@ def build_html(*, packets: List[Dict[str, Any]], title: str) -> str:
                 "tier": p.get("ant_tier") or "unknown",
                 "heads": _as_int(p.get("expert_heads")) or 0,
                 "batch": _as_int(p.get("batch_size")) or 0,
-                "pass": bool(p.get("stability_pass") is True),
+                "pass": is_pass,
                 "probe": p.get("probe_run_root") or "",
                 "assoc": p.get("assoc_run_root") or "",
                 "fail": ",".join([str(x) for x in (p.get("fail_reasons") or [])]),
                 "generated_utc": p.get("generated_utc") or "",
                 "git_commit": p.get("git_commit") or "",
                 "workload_id": p.get("workload_id") or "",
-                "token_budget_steps": _as_int(p.get("token_budget_steps")),
+                "token_budget_steps": token_budget_steps,
+                "assoc_eval_n": assoc_eval_n,
+                "rankable": is_rankable,
             }
         )
 
@@ -321,6 +327,7 @@ def build_html(*, packets: List[Dict[str, Any]], title: str) -> str:
     points_total = len(pts)
     pass_count = sum(1 for r in pts if r.get("pass") is True)
     fail_count = points_total - pass_count
+    rankable_count = sum(1 for r in pts if r.get("rankable") is True)
     tier_list = ", ".join(tiers) if tiers else "-"
     gen_times = sorted([str(r.get("generated_utc") or "") for r in pts if r.get("generated_utc")])
     gen_span = f"{gen_times[0]} .. {gen_times[-1]}" if gen_times else "-"
@@ -443,7 +450,8 @@ def build_html(*, packets: List[Dict[str, Any]], title: str) -> str:
         <div class="card meta">
           <h1>{title_esc}</h1>
           <b>Source:</b> <code>ant_ratio_packets.jsonl</code><br />
-          <b>Packets loaded:</b> {packets_total} (points plotted: {points_total}, pass: {pass_count}, fail: {fail_count})<br />
+          <b>Packets loaded:</b> {packets_total} (points plotted: {points_total}, pass: {pass_count}, fail: {fail_count}, rankable: {rankable_count})<br />
+          <b>Rankable gate:</b> PASS and token_budget_steps &gt;= 30 and assoc_eval_n &gt;= 512<br />
           <b>Tiers:</b> {tier_list}<br />
           <b>Generated UTC span:</b> <code>{_html_escape(gen_span)}</code><br />
           <b>3D axes:</b> X=vram_ratio_reserved, Y=throughput_tokens_per_s, Z=assoc_byte_disjoint_accuracy<br />
