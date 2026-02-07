@@ -27,15 +27,14 @@ def main() -> int:
     train_root.mkdir(parents=True, exist_ok=True)
 
     env = dict(os.environ)
-    # Uninterrupted saturation: run exactly one synth session and ignore wall-clock
-    # cutoffs so `step` stays monotonic (no per-episode reset/re-init).
+    # Uninterrupted saturation: run synth continuously and ignore wall-clock/max-step
+    # cutoffs so `step` stays monotonic unless the process itself restarts.
     env.update(
         {
             "VAR_PROJECT_ROOT": str(train_root),
             "VAR_LOGGING_PATH": str(train_root / "vraxion.log"),
             "VAR_COMPUTE_DEVICE": "cuda",
             "VRX_SYNTH": "1",
-            "VRX_SYNTH_ONCE": "1",
             "VRX_SYNTH_MODE": "assoc_byte",
             "VRX_SYNTH_LEN": "256",
             "VRX_ASSOC_KEYS": "64",
