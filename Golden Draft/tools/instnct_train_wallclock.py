@@ -323,13 +323,30 @@ def eval_model(model, eval_loader, dataset_name: str, model_name: str):
     model.eval()
     correct = 0
     total = 0
+    try:
+        device = next(model.parameters()).device
+    except StopIteration:
+        device = torch.device("cpu")
     with torch.no_grad():
         for batch in eval_loader:
             inputs, targets = batch
-            outputs = model(inputs)[0] if isinstance(model(inputs), tuple) else model(inputs)
-            preds = outputs.argmax(dim=1)
-            correct += int((preds == targets).sum().item())
-            total += int(targets.numel())
+            try:
+                if isinstance(inputs, torch.Tensor):
+                    inputs = inputs.to(device=device, non_blocking=True)
+                if isinstance(targets, torch.Tensor):
+                    targets = targets.to(device=device, non_blocking=True)
+
+                out = model(inputs)
+                outputs = out[0] if isinstance(out, tuple) else out
+                preds = outputs.argmax(dim=1)
+                correct += int((preds == targets).sum().item())
+                total += int(targets.numel())
+            except Exception as exc:
+                # Eval should never take down a long-running saturation run.
+                log(f"[eval] ERROR: {type(exc).__name__}: {exc}")
+                if model_was_training:
+                    model.train()
+                return {"eval_acc": None, "eval_error": f"{type(exc).__name__}: {exc}"}
     if model_was_training:
         model.train()
     if total <= 0:
@@ -1793,4 +1810,3 @@ def train_wallclock(model, loader, dataset_name, model_name, num_classes, wall_c
         "state_loop_max_dwell": getattr(model, "state_loop_max_dwell", None),
         "state_loop_mean_dwell": getattr(model, "state_loop_mean_dwell", None),
     }
-
