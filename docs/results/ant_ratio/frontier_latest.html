@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>VRAXION Ant Ratio Frontier v0 (Public)</title>
+    <script src="https://cdn.plot.ly/plotly-2.29.1.min.js"></script>
+    <style>
+      html, body {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+        background: #0b0f14;
+        color: #e6edf3;
+        font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+      }
+      .wrap {
+        max-width: 1400px;
+        margin: 0 auto;
+        padding: 12px 12px 18px 12px;
+      }
+      .top {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 10px;
+        margin-bottom: 12px;
+      }
+      .card {
+        background: rgba(22, 27, 34, 0.75);
+        border: 1px solid rgba(240, 246, 252, 0.12);
+        border-radius: 12px;
+        padding: 10px 12px;
+      }
+      h1 {
+        margin: 0 0 6px 0;
+        font-size: 16px;
+        font-weight: 700;
+      }
+      .meta {
+        font-size: 12px;
+        line-height: 1.45;
+        color: rgba(230, 237, 243, 0.92);
+      }
+      .meta b { color: #ffffff; }
+      .meta code {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+        font-size: 11px;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: 1.3fr 1fr;
+        gap: 12px;
+      }
+      @media (max-width: 1100px) {
+        .grid { grid-template-columns: 1fr; }
+      }
+      .plot {
+        width: 100%;
+        height: 520px;
+      }
+      .plot.small {
+        height: 320px;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12px;
+      }
+      th, td {
+        border-bottom: 1px solid rgba(240, 246, 252, 0.10);
+        padding: 6px 6px;
+        vertical-align: top;
+      }
+      th {
+        text-align: left;
+        font-weight: 700;
+        color: rgba(230, 237, 243, 0.98);
+        position: sticky;
+        top: 0;
+        background: rgba(22, 27, 34, 0.92);
+      }
+      .scroll {
+        max-height: 360px;
+        overflow: auto;
+        border-radius: 10px;
+        border: 1px solid rgba(240, 246, 252, 0.08);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="top">
+        <div class="card meta">
+          <h1>VRAXION Ant Ratio Frontier v0 (Public)</h1>
+          <b>Source:</b> <code>ant_ratio_packets.jsonl</code><br />
+          <b>Packets loaded:</b> 13 (points plotted: 13, pass: 13, fail: 0, rankable: 13)<br />
+          <b>Rankable gate:</b> PASS and token_budget_steps &gt;= 30 and assoc_eval_n &gt;= 512<br />
+          <b>Tiers:</b> real, small, stress<br />
+          <b>Generated UTC span:</b> <code>2026-02-07T11:36:07Z .. 2026-02-07T11:36:07Z</code><br />
+          <b>3D axes:</b> X=vram_ratio_reserved, Y=throughput_tokens_per_s, Z=assoc_byte_disjoint_accuracy<br />
+          <b>Color:</b> desirability = log_norm(tok/s) * exp(-((vram-0.85)/0.10)^2), zeroed on FAIL
+        </div>
+      </div>
+
+      <div class="grid">
+        <div class="card">
+          <div id="plot3d" class="plot"></div>
+        </div>
+        <div class="card">
+          <div id="plot_vram_tok" class="plot small"></div>
+          <div id="plot_heads_tok" class="plot small"></div>
+          <div id="plot_heads_acc" class="plot small"></div>
+        </div>
+      </div>
+
+      <div style="height:12px;"></div>
+
+      <div class="card">
+        <div class="meta"><b>Top points</b> (sorted by PASS then desirability; first 80 shown)</div>
+        <div class="scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>tier</th>
+                <th>E</th>
+                <th>B</th>
+                <th>status</th>
+                <th>vram</th>
+                <th>tok/s</th>
+                <th>acc</th>
+                <th>des</th>
+                <th>probe</th>
+                <th>assoc</th>
+              </tr>
+            </thead>
+            <tbody>
+<tr><td>small</td><td>E2</td><td>B27</td><td>PASS</td><td>0.863</td><td>1326.4</td><td>0.0039</td><td>0.982</td><td><code></code></td><td><code></code></td></tr>
+<tr><td>small</td><td>E1</td><td>B27</td><td>PASS</td><td>0.863</td><td>1287.7</td><td>0.0078</td><td>0.978</td><td><code></code></td><td><code></code></td></tr>
+<tr><td>small</td><td>E4</td><td>B27</td><td>PASS</td><td>0.863</td><td>1134.4</td><td>0.0039</td><td>0.961</td><td><code></code></td><td><code></code></td></tr>
+<tr><td>small</td><td>E8</td><td>B27</td><td>PASS</td><td>0.864</td><td>927.2</td><td>0.0039</td><td>0.932</td><td><code></code></td><td><code></code></td></tr>
+<tr><td>small</td><td>E16</td><td>B27</td><td>PASS</td><td>0.864</td><td>707.9</td><td>0.0078</td><td>0.895</td><td><code></code></td><td><code></code></td></tr>
+<tr><td>real</td><td>E1</td><td>B3</td><td>PASS</td><td>0.858</td><td>171.9</td><td>0.0020</td><td>0.712</td><td><code></code></td><td><code></code></td></tr>
+<tr><td>real</td><td>E2</td><td>B3</td><td>PASS</td><td>0.858</td><td>151.0</td><td>0.0059</td><td>0.694</td><td><code></code></td><td><code></code></td></tr>
+<tr><td>real</td><td>E4</td><td>B3</td><td>PASS</td><td>0.858</td><td>142.7</td><td>0.0020</td><td>0.686</td><td><code></code></td><td><code></code></td></tr>
+<tr><td>real</td><td>E8</td><td>B3</td><td>PASS</td><td>0.859</td><td>130.0</td><td>0.0078</td><td>0.673</td><td><code></code></td><td><code></code></td></tr>
+<tr><td>real</td><td>E16</td><td>B3</td><td>PASS</td><td>0.860</td><td>123.1</td><td>0.0039</td><td>0.664</td><td><code></code></td><td><code></code></td></tr>
+<tr><td>stress</td><td>E1</td><td>B1</td><td>PASS</td><td>0.763</td><td>53.5</td><td>0.0059</td><td>0.261</td><td><code></code></td><td><code></code></td></tr>
+<tr><td>stress</td><td>E4</td><td>B1</td><td>PASS</td><td>0.763</td><td>48.8</td><td>0.0078</td><td>0.257</td><td><code></code></td><td><code></code></td></tr>
+<tr><td>stress</td><td>E2</td><td>B1</td><td>PASS</td><td>0.763</td><td>49.9</td><td>0.0039</td><td>0.257</td><td><code></code></td><td><code></code></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const data3d = [{"type":"scatter3d","mode":"markers","name":"real","x":[0.8576226680101371,0.8578669353607523,0.8581112027113675,0.8585997374125981,0.8595768068150591],"y":[171.8563225058159,151.024492460774,142.72987687041868,130.04085268943595,123.1260084835987],"z":[0.001953125,0.005859375,0.001953125,0.0078125,0.00390625],"text":["real | E=1 | B=3 | PASS<br>vram=0.858 | toks/s=171.9 | acc=0.0020<br>des=0.712 | fit=0.994 | logtok=0.717<br>probe=<br>assoc=","real | E=2 | B=3 | PASS<br>vram=0.858 | toks/s=151.0 | acc=0.0059<br>des=0.694 | fit=0.994 | logtok=0.699<br>probe=<br>assoc=","real | E=4 | B=3 | PASS<br>vram=0.858 | toks/s=142.7 | acc=0.0020<br>des=0.686 | fit=0.993 | logtok=0.691<br>probe=<br>assoc=","real | E=8 | B=3 | PASS<br>vram=0.859 | toks/s=130.0 | acc=0.0078<br>des=0.673 | fit=0.993 | logtok=0.678<br>probe=<br>assoc=","real | E=16 | B=3 | PASS<br>vram=0.860 | toks/s=123.1 | acc=0.0039<br>des=0.664 | fit=0.991 | logtok=0.670<br>probe=<br>assoc="],"hoverinfo":"text","marker":{"size":[7.0,8.0,10.0,14.0,18.0],"color":[0.7123625937475186,0.6943450208716969,0.6863230065121805,0.6730045709609132,0.6643403822013293],"colorscale":"RdYlGn","cmin":0.0,"cmax":1.0,"showscale":true,"colorbar":{"title":"desirability"},"symbol":["diamond","diamond","diamond","diamond","diamond"],"opacity":0.9,"line":{"width":0.6,"color":"rgba(240,246,252,0.16)"}}},{"type":"scatter3d","mode":"markers","name":"small","x":[0.8633629507495955,0.8633629507495955,0.863485084424903,0.8637293517755184,0.8640957528014411],"y":[1287.6859196865823,1326.4481116904642,1134.3940824601625,927.1636663686497,707.8874594962255],"z":[0.0078125,0.00390625,0.00390625,0.00390625,0.0078125],"text":["small | E=1 | B=27 | PASS<br>vram=0.863 | toks/s=1287.7 | acc=0.0078<br>des=0.978 | fit=0.982 | logtok=0.996<br>probe=<br>assoc=","small | E=2 | B=27 | PASS<br>vram=0.863 | toks/s=1326.4 | acc=0.0039<br>des=0.982 | fit=0.982 | logtok=1.000<br>probe=<br>assoc=","small | E=4 | B=27 | PASS<br>vram=0.863 | toks/s=1134.4 | acc=0.0039<br>des=0.961 | fit=0.982 | logtok=0.978<br>probe=<br>assoc=","small | E=8 | B=27 | PASS<br>vram=0.864 | toks/s=927.2 | acc=0.0039<br>des=0.932 | fit=0.981 | logtok=0.950<br>probe=<br>assoc=","small | E=16 | B=27 | PASS<br>vram=0.864 | toks/s=707.9 | acc=0.0078<br>des=0.895 | fit=0.980 | logtok=0.913<br>probe=<br>assoc="],"hoverinfo":"text","marker":{"size":[7.0,8.0,10.0,14.0,18.0],"color":[0.9782534162601215,0.9823016434164861,0.960638739281242,0.9324988258379358,0.8948070317253984],"colorscale":"RdYlGn","cmin":0.0,"cmax":1.0,"showscale":false,"colorbar":null,"symbol":["circle","circle","circle","circle","circle"],"opacity":0.9,"line":{"width":0.6,"color":"rgba(240,246,252,0.16)"}}},{"type":"scatter3d","mode":"markers","name":"stress","x":[0.7629690696467284,0.763091203322036,0.7634576043479588],"y":[53.51592583698573,49.8945419022562,48.84938218849753],"z":[0.005859375,0.00390625,0.0078125],"text":["stress | E=1 | B=1 | PASS<br>vram=0.763 | toks/s=53.5 | acc=0.0059<br>des=0.261 | fit=0.469 | logtok=0.556<br>probe=<br>assoc=","stress | E=2 | B=1 | PASS<br>vram=0.763 | toks/s=49.9 | acc=0.0039<br>des=0.257 | fit=0.470 | logtok=0.546<br>probe=<br>assoc=","stress | E=4 | B=1 | PASS<br>vram=0.763 | toks/s=48.8 | acc=0.0078<br>des=0.257 | fit=0.473 | logtok=0.544<br>probe=<br>assoc="],"hoverinfo":"text","marker":{"size":[7.0,8.0,10.0],"color":[0.2607083526918407,0.25677147785313775,0.25704409809514417],"colorscale":"RdYlGn","cmin":0.0,"cmax":1.0,"showscale":false,"colorbar":null,"symbol":["square","square","square"],"opacity":0.9,"line":{"width":0.6,"color":"rgba(240,246,252,0.16)"}}}];
+      const dataVramTok = [{"type":"scatter","mode":"markers+lines","name":"real","x":[0.8576226680101371,0.8578669353607523,0.8581112027113675,0.8585997374125981,0.8595768068150591],"y":[171.8563225058159,151.024492460774,142.72987687041868,130.04085268943595,123.1260084835987],"text":["real | E=1 | B=3 | PASS<br>vram=0.858 | toks/s=171.9 | acc=0.0020<br>des=0.712","real | E=2 | B=3 | PASS<br>vram=0.858 | toks/s=151.0 | acc=0.0059<br>des=0.694","real | E=4 | B=3 | PASS<br>vram=0.858 | toks/s=142.7 | acc=0.0020<br>des=0.686","real | E=8 | B=3 | PASS<br>vram=0.859 | toks/s=130.0 | acc=0.0078<br>des=0.673","real | E=16 | B=3 | PASS<br>vram=0.860 | toks/s=123.1 | acc=0.0039<br>des=0.664"],"hoverinfo":"text","marker":{"size":[7.0,8.0,10.0,14.0,18.0],"color":"#2ea043","opacity":0.9},"line":{"width":1.2,"color":"#2ea043"}},{"type":"scatter","mode":"markers+lines","name":"small","x":[0.8633629507495955,0.8633629507495955,0.863485084424903,0.8637293517755184,0.8640957528014411],"y":[1287.6859196865823,1326.4481116904642,1134.3940824601625,927.1636663686497,707.8874594962255],"text":["small | E=1 | B=27 | PASS<br>vram=0.863 | toks/s=1287.7 | acc=0.0078<br>des=0.978","small | E=2 | B=27 | PASS<br>vram=0.863 | toks/s=1326.4 | acc=0.0039<br>des=0.982","small | E=4 | B=27 | PASS<br>vram=0.863 | toks/s=1134.4 | acc=0.0039<br>des=0.961","small | E=8 | B=27 | PASS<br>vram=0.864 | toks/s=927.2 | acc=0.0039<br>des=0.932","small | E=16 | B=27 | PASS<br>vram=0.864 | toks/s=707.9 | acc=0.0078<br>des=0.895"],"hoverinfo":"text","marker":{"size":[7.0,8.0,10.0,14.0,18.0],"color":"#58a6ff","opacity":0.9},"line":{"width":1.2,"color":"#58a6ff"}},{"type":"scatter","mode":"markers+lines","name":"stress","x":[0.7629690696467284,0.763091203322036,0.7634576043479588],"y":[53.51592583698573,49.8945419022562,48.84938218849753],"text":["stress | E=1 | B=1 | PASS<br>vram=0.763 | toks/s=53.5 | acc=0.0059<br>des=0.261","stress | E=2 | B=1 | PASS<br>vram=0.763 | toks/s=49.9 | acc=0.0039<br>des=0.257","stress | E=4 | B=1 | PASS<br>vram=0.763 | toks/s=48.8 | acc=0.0078<br>des=0.257"],"hoverinfo":"text","marker":{"size":[7.0,8.0,10.0],"color":"#d29922","opacity":0.9},"line":{"width":1.2,"color":"#d29922"}}];
+      const dataHeadsTok = [{"type":"scatter","mode":"markers+lines","name":"real","x":[1,2,4,8,16],"y":[171.8563225058159,151.024492460774,142.72987687041868,130.04085268943595,123.1260084835987],"text":["real | E=1 | B=3 | PASS<br>vram=0.858 | toks/s=171.9 | acc=0.0020<br>des=0.712","real | E=2 | B=3 | PASS<br>vram=0.858 | toks/s=151.0 | acc=0.0059<br>des=0.694","real | E=4 | B=3 | PASS<br>vram=0.858 | toks/s=142.7 | acc=0.0020<br>des=0.686","real | E=8 | B=3 | PASS<br>vram=0.859 | toks/s=130.0 | acc=0.0078<br>des=0.673","real | E=16 | B=3 | PASS<br>vram=0.860 | toks/s=123.1 | acc=0.0039<br>des=0.664"],"hoverinfo":"text","marker":{"size":9,"color":"#2ea043","opacity":0.9},"line":{"width":1.2,"color":"#2ea043"}},{"type":"scatter","mode":"markers+lines","name":"small","x":[1,2,4,8,16],"y":[1287.6859196865823,1326.4481116904642,1134.3940824601625,927.1636663686497,707.8874594962255],"text":["small | E=1 | B=27 | PASS<br>vram=0.863 | toks/s=1287.7 | acc=0.0078<br>des=0.978","small | E=2 | B=27 | PASS<br>vram=0.863 | toks/s=1326.4 | acc=0.0039<br>des=0.982","small | E=4 | B=27 | PASS<br>vram=0.863 | toks/s=1134.4 | acc=0.0039<br>des=0.961","small | E=8 | B=27 | PASS<br>vram=0.864 | toks/s=927.2 | acc=0.0039<br>des=0.932","small | E=16 | B=27 | PASS<br>vram=0.864 | toks/s=707.9 | acc=0.0078<br>des=0.895"],"hoverinfo":"text","marker":{"size":9,"color":"#58a6ff","opacity":0.9},"line":{"width":1.2,"color":"#58a6ff"}},{"type":"scatter","mode":"markers+lines","name":"stress","x":[1,2,4],"y":[53.51592583698573,49.8945419022562,48.84938218849753],"text":["stress | E=1 | B=1 | PASS<br>vram=0.763 | toks/s=53.5 | acc=0.0059<br>des=0.261","stress | E=2 | B=1 | PASS<br>vram=0.763 | toks/s=49.9 | acc=0.0039<br>des=0.257","stress | E=4 | B=1 | PASS<br>vram=0.763 | toks/s=48.8 | acc=0.0078<br>des=0.257"],"hoverinfo":"text","marker":{"size":9,"color":"#d29922","opacity":0.9},"line":{"width":1.2,"color":"#d29922"}}];
+      const dataHeadsAcc = [{"type":"scatter","mode":"markers+lines","name":"real","x":[1,2,4,8,16],"y":[0.001953125,0.005859375,0.001953125,0.0078125,0.00390625],"text":["real | E=1 | B=3 | PASS<br>vram=0.858 | toks/s=171.9 | acc=0.0020<br>des=0.712","real | E=2 | B=3 | PASS<br>vram=0.858 | toks/s=151.0 | acc=0.0059<br>des=0.694","real | E=4 | B=3 | PASS<br>vram=0.858 | toks/s=142.7 | acc=0.0020<br>des=0.686","real | E=8 | B=3 | PASS<br>vram=0.859 | toks/s=130.0 | acc=0.0078<br>des=0.673","real | E=16 | B=3 | PASS<br>vram=0.860 | toks/s=123.1 | acc=0.0039<br>des=0.664"],"hoverinfo":"text","marker":{"size":9,"color":"#2ea043","opacity":0.9},"line":{"width":1.2,"color":"#2ea043"}},{"type":"scatter","mode":"markers+lines","name":"small","x":[1,2,4,8,16],"y":[0.0078125,0.00390625,0.00390625,0.00390625,0.0078125],"text":["small | E=1 | B=27 | PASS<br>vram=0.863 | toks/s=1287.7 | acc=0.0078<br>des=0.978","small | E=2 | B=27 | PASS<br>vram=0.863 | toks/s=1326.4 | acc=0.0039<br>des=0.982","small | E=4 | B=27 | PASS<br>vram=0.863 | toks/s=1134.4 | acc=0.0039<br>des=0.961","small | E=8 | B=27 | PASS<br>vram=0.864 | toks/s=927.2 | acc=0.0039<br>des=0.932","small | E=16 | B=27 | PASS<br>vram=0.864 | toks/s=707.9 | acc=0.0078<br>des=0.895"],"hoverinfo":"text","marker":{"size":9,"color":"#58a6ff","opacity":0.9},"line":{"width":1.2,"color":"#58a6ff"}},{"type":"scatter","mode":"markers+lines","name":"stress","x":[1,2,4],"y":[0.005859375,0.00390625,0.0078125],"text":["stress | E=1 | B=1 | PASS<br>vram=0.763 | toks/s=53.5 | acc=0.0059<br>des=0.261","stress | E=2 | B=1 | PASS<br>vram=0.763 | toks/s=49.9 | acc=0.0039<br>des=0.257","stress | E=4 | B=1 | PASS<br>vram=0.763 | toks/s=48.8 | acc=0.0078<br>des=0.257"],"hoverinfo":"text","marker":{"size":9,"color":"#d29922","opacity":0.9},"line":{"width":1.2,"color":"#d29922"}}];
+
+      const layout3d = {
+        paper_bgcolor: "#0b0f14",
+        plot_bgcolor: "#0b0f14",
+        font: { color: "#e6edf3" },
+        margin: { l: 0, r: 0, t: 40, b: 0 },
+        title: { text: "3D frontier", x: 0.01, xanchor: "left", font: { size: 14 } },
+        scene: {
+          xaxis: { title: "vram_ratio_reserved", gridcolor: "rgba(240,246,252,0.10)", zerolinecolor: "rgba(240,246,252,0.15)" },
+          yaxis: { title: "throughput_tokens_per_s", gridcolor: "rgba(240,246,252,0.10)", zerolinecolor: "rgba(240,246,252,0.15)" },
+          zaxis: { title: "assoc_byte_disjoint_accuracy", gridcolor: "rgba(240,246,252,0.10)", zerolinecolor: "rgba(240,246,252,0.15)" },
+          bgcolor: "#0b0f14"
+        },
+        legend: { x: 0.01, y: 0.98, bgcolor: "rgba(0,0,0,0)" }
+      };
+
+      const layout2d = (title, xTitle, yTitle) => ({
+        paper_bgcolor: "#0b0f14",
+        plot_bgcolor: "#0b0f14",
+        font: { color: "#e6edf3" },
+        margin: { l: 48, r: 10, t: 36, b: 38 },
+        title: { text: title, x: 0.01, xanchor: "left", font: { size: 13 } },
+        xaxis: { title: xTitle, gridcolor: "rgba(240,246,252,0.10)", zerolinecolor: "rgba(240,246,252,0.15)" },
+        yaxis: { title: yTitle, gridcolor: "rgba(240,246,252,0.10)", zerolinecolor: "rgba(240,246,252,0.15)" },
+        legend: { orientation: "h", x: 0.01, y: 1.15, bgcolor: "rgba(0,0,0,0)" },
+      });
+
+      Plotly.newPlot("plot3d", data3d, layout3d, { responsive: true });
+      Plotly.newPlot("plot_vram_tok", dataVramTok, layout2d("2D: tok/s vs VRAM ratio", "vram_ratio_reserved", "throughput_tokens_per_s"), { responsive: true });
+      Plotly.newPlot("plot_heads_tok", dataHeadsTok, layout2d("2D: tok/s vs expert_heads", "expert_heads", "throughput_tokens_per_s"), { responsive: true });
+      Plotly.newPlot("plot_heads_acc", dataHeadsAcc, layout2d("2D: accuracy vs expert_heads", "expert_heads", "assoc_byte_disjoint_accuracy"), { responsive: true });
+    </script>
+  </body>
+</html>

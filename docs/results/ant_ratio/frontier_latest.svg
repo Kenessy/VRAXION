@@ -1,0 +1,27 @@
+<svg xmlns='http://www.w3.org/2000/svg' width='1200' height='720' viewBox='0 0 1200 720'>
+<style>
+  .bg { fill: #0d1117; }
+  .axis { stroke: #30363d; stroke-width: 1; }
+  .label { fill: #c9d1d9; font-size: 13px; font-family: ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial; }
+  .title { fill: #f0f6fc; font-size: 18px; font-weight: 700; font-family: ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial; }
+</style>
+<rect class='bg' x='0' y='0' width='1200' height='720' />
+<text class='title' x='90' y='28'>VRA-78 Public Frontier (2D)</text>
+<line class='axis' x1='90' y1='640' x2='1160' y2='640' />
+<line class='axis' x1='90' y1='40' x2='90' y2='640' />
+<text class='label' x='940' y='696'>Throughput (tokens/s)</text>
+<text class='label' x='14' y='56'>Assoc disjoint accuracy</text>
+<circle cx='1127.54' cy='40.00' r='4.50' fill='#58a6ff' fill-opacity='0.86' stroke='#f0f6fc' stroke-opacity='0.25' stroke-width='0.8'><title>small E=1 B=27 PASS tok/s=1287.69 acc=0.007812</title></circle>
+<circle cx='1160.00' cy='440.00' r='5.00' fill='#58a6ff' fill-opacity='0.86' stroke='#f0f6fc' stroke-opacity='0.25' stroke-width='0.8'><title>small E=2 B=27 PASS tok/s=1326.45 acc=0.003906</title></circle>
+<circle cx='999.15' cy='440.00' r='6.00' fill='#58a6ff' fill-opacity='0.86' stroke='#f0f6fc' stroke-opacity='0.25' stroke-width='0.8'><title>small E=4 B=27 PASS tok/s=1134.39 acc=0.003906</title></circle>
+<circle cx='825.60' cy='440.00' r='8.00' fill='#58a6ff' fill-opacity='0.86' stroke='#f0f6fc' stroke-opacity='0.25' stroke-width='0.8'><title>small E=8 B=27 PASS tok/s=927.16 acc=0.003906</title></circle>
+<circle cx='641.95' cy='40.00' r='12.00' fill='#58a6ff' fill-opacity='0.86' stroke='#f0f6fc' stroke-opacity='0.25' stroke-width='0.8'><title>small E=16 B=27 PASS tok/s=707.89 acc=0.007812</title></circle>
+<circle cx='193.02' cy='640.00' r='4.50' fill='#2ea043' fill-opacity='0.86' stroke='#f0f6fc' stroke-opacity='0.25' stroke-width='0.8'><title>real E=1 B=3 PASS tok/s=171.86 acc=0.001953</title></circle>
+<circle cx='175.57' cy='240.00' r='5.00' fill='#2ea043' fill-opacity='0.86' stroke='#f0f6fc' stroke-opacity='0.25' stroke-width='0.8'><title>real E=2 B=3 PASS tok/s=151.02 acc=0.005859</title></circle>
+<circle cx='168.63' cy='640.00' r='6.00' fill='#2ea043' fill-opacity='0.86' stroke='#f0f6fc' stroke-opacity='0.25' stroke-width='0.8'><title>real E=4 B=3 PASS tok/s=142.73 acc=0.001953</title></circle>
+<circle cx='158.00' cy='40.00' r='8.00' fill='#2ea043' fill-opacity='0.86' stroke='#f0f6fc' stroke-opacity='0.25' stroke-width='0.8'><title>real E=8 B=3 PASS tok/s=130.04 acc=0.007812</title></circle>
+<circle cx='152.21' cy='440.00' r='12.00' fill='#2ea043' fill-opacity='0.86' stroke='#f0f6fc' stroke-opacity='0.25' stroke-width='0.8'><title>real E=16 B=3 PASS tok/s=123.13 acc=0.003906</title></circle>
+<circle cx='93.91' cy='240.00' r='4.50' fill='#d29922' fill-opacity='0.86' stroke='#f0f6fc' stroke-opacity='0.25' stroke-width='0.8'><title>stress E=1 B=1 PASS tok/s=53.52 acc=0.005859</title></circle>
+<circle cx='90.88' cy='440.00' r='5.00' fill='#d29922' fill-opacity='0.86' stroke='#f0f6fc' stroke-opacity='0.25' stroke-width='0.8'><title>stress E=2 B=1 PASS tok/s=49.89 acc=0.003906</title></circle>
+<circle cx='90.00' cy='40.00' r='6.00' fill='#d29922' fill-opacity='0.86' stroke='#f0f6fc' stroke-opacity='0.25' stroke-width='0.8'><title>stress E=4 B=1 PASS tok/s=48.85 acc=0.007812</title></circle>
+</svg>
